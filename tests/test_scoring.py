@@ -131,6 +131,9 @@ def test_fact_no_match(text, fact):
     "I could not find this in the provided documents.",
     "I am not able to answer from the context.",
     "The answer is not stated in the context.",
+    "The documents do not list the RTR port.",
+    "None are listed in the context.",
+    "The phone number is not listed in the provided documents.",
 ])
 def test_refusal_positive(text):
     assert is_refusal(text)
@@ -146,6 +149,8 @@ def test_refusal_positive(text):
     "If the source does not have a valid route, the packet is dropped.",
     "The update text doesn't include the community.",
     "The router could not find a valid route.",
+    "The routes are listed in the Adj-RIB-In.",
+    "The table does not list prefixes longer than /24.",
 ])
 def test_refusal_negative(text):
     assert not is_refusal(text)
