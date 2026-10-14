@@ -1,0 +1,25 @@
+# Generation settings are identical for every model so results are comparable.
+defaults:
+  temperature: 0
+  seed: 7
+  num_ctx: 8192
+  num_predict: 512
+  repeats: 3
+
+models:
+  - {name: qwen2.5:1.5b-instruct-q4_K_M, family: qwen2.5, params_b: 1.5, quant: q4_K_M}
+  - {name: qwen2.5:1.5b-instruct-q8_0,   family: qwen2.5, params_b: 1.5, quant: q8_0}
+  - {name: qwen2.5:3b-instruct-q4_K_M,   family: qwen2.5, params_b: 3,   quant: q4_K_M}
+  - {name: qwen2.5:3b-instruct-q8_0,     family: qwen2.5, params_b: 3,   quant: q8_0}
+  - {name: qwen2.5:7b-instruct-q4_K_M,   family: qwen2.5, params_b: 7.6, quant: q4_K_M}
+  - {name: qwen2.5:7b-instruct-q8_0,     family: qwen2.5, params_b: 7.6, quant: q8_0}
+  - {name: qwen2.5:14b-instruct-q4_K_M,  family: qwen2.5, params_b: 14.8, quant: q4_K_M}
+  - {name: llama3.1:8b-instruct-q4_K_M,  family: llama3.1, params_b: 8,  quant: q4_K_M}
+  - {name: llama3.1:8b-instruct-q8_0,    family: llama3.1, params_b: 8,  quant: q8_0}
+  - {name: mistral:7b-instruct-v0.3-q4_K_M, family: mistral, params_b: 7.2, quant: q4_K_M}
+  - {name: mistral:7b-instruct-v0.3-q8_0,   family: mistral, params_b: 7.2, quant: q8_0}
+  - {name: hosted, family: hosted, params_b: null, quant: n/a, provider: openai_compat}
+
+not_run:
+  - name: qwen2.5:14b-instruct-q8_0
+    reason: ~15.7 GB of weights alone; cannot fit in 16 GB unified memory with the OS and KV cache.

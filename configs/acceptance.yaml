@@ -1,0 +1,23 @@
+# Thresholds fixed before any results were collected. Do not tune to the data.
+use_cases:
+  noc_tools:
+    task: tools
+    description: NOC assistant that queries live network state through tools
+    criteria:
+      tool_selection: {min: 0.90}
+      args_exact: {min: 0.85}
+      invalid_rate: {max: 0.02}
+      latency_p95_s: {max: 4.0}
+  doc_qa:
+    task: rag
+    description: Q&A over RFCs and routing-policy documents
+    criteria:
+      fact_recall: {min: 0.80}
+      faithfulness: {min: 4.0}
+      refusal_unanswerable: {min: 0.80}
+      latency_p95_s: {max: 6.0}
+  triage:
+    task: triage
+    description: Offline summarisation of incident logs
+    criteria:
+      quality_vs_baseline: {min: -0.10}
