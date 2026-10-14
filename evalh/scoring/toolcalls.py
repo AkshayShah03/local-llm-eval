@@ -21,7 +21,7 @@ def _norm(v):
     if isinstance(v, str):
         s = v.strip()
         try:
-            return str(ipaddress.ip_network(s, strict=False)) if "/" in s else str(ipaddress.ip_address(s))
+            return str(ipaddress.ip_interface(s)) if "/" in s else str(ipaddress.ip_address(s))
         except ValueError:
             pass
         if m := re.fullmatch(r"(?i)as\s*(\d+)", s):
@@ -52,7 +52,12 @@ def score_tool_calls(called: list[dict], expected: list[dict], content: str = ""
     for c in called:
         args = _parse(c.get("arguments"))
         schema = _SCHEMAS.get(c.get("name"))
-        if args is None or schema is None or any(k not in args for k in schema.get("required", [])):
+        # Arguments must come from the tool schema (anything else is hallucinated). Extra
+        # args that ARE in the schema but absent from the expected call (e.g. open_ticket
+        # summary/router, free text) are allowed and simply not compared.
+        if (args is None or schema is None
+                or any(k not in args for k in schema.get("required", []))
+                or any(k not in schema.get("properties", {}) for k in args)):
             invalid = True
             continue
         parsed.append((c["name"], args))

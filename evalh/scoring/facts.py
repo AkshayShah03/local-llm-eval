@@ -1,24 +1,37 @@
 import re
 
 _DASHES = re.compile(r"[‐-―\-_]")
-_ASN = re.compile(r"\bas\s+(\d+)")
+# Case-sensitive on purpose: only an upper-case "AS" token is an ASN prefix, so the
+# English word "as" ("known as 65535:666") is left alone. Lower-case "as2914" already
+# matches the normalised form.
+_ASN = re.compile(r"\bAS\s+(\d+)")
+_THOUSANDS = re.compile(r"(?<![\d,.])\d{1,3}(?:,\d{3})+(?!\d)")
 
+_SRC = r"(?:documents?|context|passages?|sources?|text|excerpts?|material)"
 _REFUSAL = re.compile(
-    r"can['’]?t answer|cannot answer|unable to answer|not in the provided|"
-    r"(?:does not|doesn['’]t) (?:contain|include|mention|provide)|"
-    r"no information|not (?:mentioned|covered|specified)|"
-    r"(?:don['’]t|do not) have (?:enough )?information|insufficient information"
+    r"can['’]?t answer|cannot answer|unable to answer|"
+    r"\bi (?:don['’]t|do not) know\b|"
+    r"\bi (?:don['’]t|do not) have (?:enough |sufficient )?information|"
+    r"insufficient information|"
+    rf"\b{_SRC} (?:do not|does not|don['’]t|doesn['’]t) "
+    r"(?:contain|include|mention|provide|cover|say|specify|have)\b|"
+    r"\bnot (?:provided|mentioned|covered|included|specified|found|available) "
+    rf"in (?:the |these |those |provided |given )*{_SRC}|"
+    r"\bno mention of\b|"
+    rf"\bno (?:relevant )?information (?:in|within|available in) (?:the |these |those |provided )*{_SRC}"
 )
 
 
 def normalize(s: str) -> str:
-    s = _DASHES.sub(" ", s.lower())
-    s = re.sub(r"\s+", " ", s).strip()
-    return _ASN.sub(r"as\1", s)
+    s = _ASN.sub(r"AS\1", s)  # before lowercasing; see _ASN
+    s = _DASHES.sub(" ", s)
+    s = _THOUSANDS.sub(lambda m: m.group().replace(",", ""), s)
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    return s
 
 
 def _contains(text: str, fact: str) -> bool:
-    pattern = r"(?<![\w.])" + re.escape(normalize(fact)) + r"(?!\w)"
+    pattern = r"(?<![\w.:])" + re.escape(normalize(fact)) + r"(?!\w)(?![.:]\d)"
     return re.search(pattern, text) is not None
 
 
@@ -32,4 +45,4 @@ def fact_recall(text: str, facts: list) -> tuple[float, list]:
 
 
 def is_refusal(text: str) -> bool:
-    return _REFUSAL.search(text.lower()) is not None
+    return _REFUSAL.search(text.lower().replace("’", "'")) is not None
