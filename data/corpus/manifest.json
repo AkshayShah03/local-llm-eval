@@ -1,0 +1,51 @@
+[
+  {
+    "id": "rfc4271",
+    "title": "BGP-4",
+    "url": "https://www.rfc-editor.org/rfc/rfc4271.txt",
+    "fetched": "2026-10-14",
+    "sha256": "98b851146abcd56ecbb398dd1a818bcde2dcac6fde3d901c423d988f86eaab76"
+  },
+  {
+    "id": "rfc1997",
+    "title": "BGP Communities Attribute",
+    "url": "https://www.rfc-editor.org/rfc/rfc1997.txt",
+    "fetched": "2026-10-14",
+    "sha256": "6ed254768c9b56317a148cad33a4056b56666857f905d58dd73b3688589b237f"
+  },
+  {
+    "id": "rfc7999",
+    "title": "BLACKHOLE Community",
+    "url": "https://www.rfc-editor.org/rfc/rfc7999.txt",
+    "fetched": "2026-10-14",
+    "sha256": "a22a065503e65e83033233136f36d7ff3b59985a34c7a060d1cbe76c770004d0"
+  },
+  {
+    "id": "rfc8092",
+    "title": "BGP Large Communities Attribute",
+    "url": "https://www.rfc-editor.org/rfc/rfc8092.txt",
+    "fetched": "2026-10-14",
+    "sha256": "343fde70df329cf36e7b7671536e466a9f2adf92ca445fe498f148e8c66a25b4"
+  },
+  {
+    "id": "rfc6811",
+    "title": "BGP Prefix Origin Validation",
+    "url": "https://www.rfc-editor.org/rfc/rfc6811.txt",
+    "fetched": "2026-10-14",
+    "sha256": "05d3b68f6750fd1c6090a9132212a31bad711e513765c47ce6f8fe10fd1e68e5"
+  },
+  {
+    "id": "rfc8212",
+    "title": "Default EBGP Route Propagation Behavior without Policies",
+    "url": "https://www.rfc-editor.org/rfc/rfc8212.txt",
+    "fetched": "2026-10-14",
+    "sha256": "73d16f16d6c4d37edd8cb6cd484e4acc4b53ac9ad53ce4bff6279e873cc646f3"
+  },
+  {
+    "id": "ntt-as2914-communities",
+    "title": "NTT AS2914 BGP communities",
+    "url": "https://www.gin.ntt.net/support-center/policies-procedures/routing/",
+    "fetched": "2026-10-14",
+    "sha256": "f48fbef5c52d3b7b4babacb5c5b25a5e3107057730092d24dcfdc576d33ac11d"
+  }
+]

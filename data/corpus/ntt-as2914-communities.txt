@@ -1,0 +1,425 @@
+BGP customer communities
+
+Customers wanting to alter local preference on their routes.
+
+NTT DATA BGP customers may choose to affect our local preference on their routes by marking their routes with the following communities. Our regions are listed here:
+
+Community | Local-Pref | Description
+(default) | 120 | customer
+65520:nnnn | 50 | this community will set the local preference within country nnnn
+65530:nnnn | 50 | this community will set the local preference within region nnnn
+2914:435 | 50 | only beyond the connected country
+2914:436 | 50 | only beyond the connected region
+2914:450 | 96 | customer fallback
+2914:460 | 98 | peer backup
+2914:470 | 100 | peer
+2914:480 | 110 | customer backup
+2914:490 | 120 | customer default
+2914:666 | | blackhole
+
+Note: 65520:nnnn and 65530:nnnn are not applicable in the country or region in which the announcement originated.
+
+Customers wanting to alter their route announcements to other customers
+
+NTT DATA BGP customers may choose to prepend to all other NTT DATA BGP customers with the following communities:
+
+Community | Description
+2914:411 | prepends o/b to customer 1x
+2914:412 | prepends o/b to customer 2x
+2914:413 | prepends o/b to customer 3x
+
+Customers wanting to alter their route announcements to peers
+
+NTT DATA BGP customers may choose to prepend to all NTT DATA peers with the following communities:
+
+Community | Description
+2914:421 | prepends o/b to peers 1x
+2914:422 | prepends o/b to peers 2x
+2914:423 | prepends o/b to peers 3x
+2914:429 | do not advertise to any peers
+2914:439 | 2914:439 do not advertise to any peers outside region
+
+Note: 2914 is the ASN prepend in all cases. If used, 654xx:nnn overrides 655xx:nnn and 2914:429, 655xx:nnn overrides the 2914:42x communities.
+
+Customers wanting to alter their route announcements to selected peers
+
+NTT DATA BGP customers may choose to prepend to selected peers with the following communities, where nnn is the peer’s ASN:
+
+Community | Description
+65400:nnn | do not advertise to peer nnn in North America
+65401:nnn | prepends o/b to peer nnn 1x in North America
+65402:nnn | prepends o/b to peer nnn 2x in North America
+65403:nnn | prepends o/b to peer nnn 3x in North America
+65410:nnn | announce to peer nnn in North America, disregards 2914:429 and 65500:nnn
+65420:nnn | do not advertise to peer nnn in Europe
+65421:nnn | prepends o/b to peer nnn 1x in Europe
+65422:nnn | prepends o/b to peer nnn 2x in Europe
+65423:nnn | prepends o/b to peer nnn 3x in Europe
+65430:nnn | announce to peer nnn in Europe, disregards 2914:429 and 65500:nnn
+65440:nnn | do not advertise to peer nnn in Asia
+65441:nnn | prepends o/b to peer nnn 1x in Asia
+65442:nnn | prepends o/b to peer nnn 2x in Asia
+65443:nnn | prepends o/b to peer nnn 3x in Asia
+65450:nnn | announce to peer nnn in Asia, disregards 2914:429 and 65500:nnn
+65460:nnn | do not advertise to peer nnn in South America
+65461:nnn | prepends o/b to peer nnn 1x in South America
+65462:nnn | prepends o/b to peer nnn 2x in South America
+65463:nnn | prepends o/b to peer nnn 3x in South America
+65470:nnn | announce to peer nnn in South America, disregards 2914:429 and 65500:nnn
+65500:nnn | do not announce to peer nnn
+65501:nnn | prepend o/b to peer nnn 1x
+65502:nnn | prepend o/b to peer nnn 2x
+65503:nnn | prepend o/b to peer nnn 3x
+65510:nnn | announce to peer nnn, disregards 2914:429
+
+Note: 2914 is the ASN prepend in all cases. If used, 654xx:nnn overrides 655xx:nnn and 2914:429, 655xx:nnn overrides the 2914:42x communities.
+
+For further granularity, here are additional BGP communities customers can use to alter their route announcements to other NTT DATA BGP customers or peers, as indicated in the descriptions:
+
+Community | Description
+2914:4011 | prepend o/b to all customers 1x in North America
+2914:4012 | prepend o/b to all customers 2x in North America
+2914:4013 | prepend o/b to all customers 3x in North America
+2914:4021 | prepend o/b to all peers 1x in North America
+2914:4022 | prepend o/b to all peers 2x in North America
+2914:4023 | prepend o/b to all peers 3x in North America
+2914:4029 | do not advertise to any peer in North America
+2914:4211 | prepend o/b to all customers 1x in Europe
+2914:4212 | prepend o/b to all customers 2x in Europe
+2914:4213 | prepend o/b to all customers 3x in Europe
+2914:4221 | prepend o/b to all peers 1x in Europe
+2914:4222 | prepend o/b to all peers 2x in Europe
+2914:4223 | prepend o/b to all peers 3x in Europe
+2914:4229 | do not advertise to any peer in Europe
+2914:4411 | prepend o/b to all customers 1x in Asia
+2914:4412 | prepend o/b to all customers 2x in Asia
+2914:4413 | prepend o/b to all customers 3x in Asia
+2914:4421 | prepend o/b to all peers 1x in Asia
+2914:4422 | prepend o/b to all peers 2x in Asia
+2914:4423 | prepend o/b to all peers 3x in Asia
+2914:4429 | do not advertise to any peer in Asia
+2914:4611 | prepend o/b to all customers 1x in South America
+2914:4612 | prepend o/b to all customers 2x in South America
+2914:4613 | prepend o/b to all customers 3x in South America
+2914:4621 | prepend o/b to all peers 1x in South America
+2914:4622 | prepend o/b to all peers 2x in South America
+2914:4623 | prepend o/b to all peers 3x in South America
+2914:4629 | do not advertise to any peer in South America
+
+Note: 2914 is the ASN prepend in all cases. If used, 654xx:nnn overrides 655xx:nnn and 2914:429, 655xx:nnn overrides the 2914:42x communities.
+
+Communities marked on routes sent to customers
+
+Community | Description
+2914:410 | NTT DATA and customer routes
+2914:420 | Peer routes
+
+North America MSA origins (2914:10–)
+2914:1001 | Reston, VA
+2914:1002 | Atlanta, GA
+2914:1003 | Chicago, IL
+2914:1004 | Dallas, TX
+2914:1004 | Houston, TX
+2914:1005 | Los Angeles, CA
+2914:1006 | Miami, FL
+2914:1007 | Seattle, WA
+2914:1008 | Palo Alto, CA
+2914:1008 | San Jose, CA
+2914:1008 | San Francisco, CA
+2914:1009 | New York, NY
+2914:1009 | Newark, NJ
+2914:1010 | Sacramento, CA
+2914:1011 | Boston, MA
+2914:1012 | Toronto, Canada
+2914:1013 | Denver, CO
+2914:1014 | Phoenix, AZ
+
+EU MSA origins (2914:12–)
+2914:1201 | Dusseldorf, Germany
+2914:1201 | Frankfurt, Germany
+2914:1203 | London, England
+2914:1204 | Madrid, Spain
+2914:1205 | Paris, France
+2914:1206 | Amsterdam, Netherlands
+2914:1207 | Warsaw, Poland
+2914:1208 | Sofia, Bulgaria
+2914:1210 | Bucharest, Romania
+2914:1211 | Brussels, Belgium
+2914:1212 | Milan, Italy
+2914:1214 | Stockholm, Sweden
+2914:1215 | Vienna, Austria
+2914:1216 | Barcelona, Spain
+2914:1218 | Luxembourg City, Luxembourg
+2914:1219 | Marseilles, France
+2914:1220 | Berlin, Germany
+2914:1221 | Manchester, England
+2914:1222 | Dublin, Ireland
+
+ASIA MSA origins (2914:14–)
+2914:1401 | Kuala Lumpur, Malaysia
+2914:1402 | Chai Wan, Hong Kong
+2914:1403 | Osaka, Japan
+2914:1404 | Seoul, South Korea
+2914:1405 | Singapore
+2914:1406 | Sydney, Australia
+2914:1407 | Taipei, Taiwan
+2914:1408 | Tokyo, Japan
+2914:1409 | Tseung Kwan O, Hong Kong
+2914:1412 | Bangkok, Thailand
+
+South American MSA origins (2914:16–)
+2914:1601 | Sao Paulo, Brazil
+
+North American country origins (2914:20–)
+2914:2000 | us (United States)
+2914:2001 | ca (Canada)
+
+European country origins (2914:22–)
+2914:2201 | uk (United Kingdom)
+2914:2202 | de (Germany)
+2914:2203 | nl (Netherlands)
+2914:2204 | fr (France)
+2914:2205 | es (Spain)
+2914:2207 | pl (Poland)
+2914:2208 | bg (Bulgaria)
+2914:2210 | ro (Romania)
+2914:2211 | be (Belgium)
+2914:2212 | it (Italy)
+2914:2213 | se (Sweden)
+2914:2214 | at (Austria)
+2914:2215 | lx (Luxembourg)
+2914:2216 | ie (Ireland)
+
+Asian country origins (2914:24–)
+2914:2401 | jp (Japan)
+2914:2402 | au (Australia)
+2914:2403 | hk (Hong Kong)
+2914:2404 | tw (Taiwan)
+2914:2405 | kr (Korea)
+2914:2406 | sg (Singapore)
+2914:2407 | my (Malaysia)
+2914:2410 | th (Thailand)
+
+South America country origins (2914:26–)
+2914:2601 | br (Brazil)
+
+world regional origins (2914:3—)
+2914:3000 | North America
+2914:3075 | North America regional customer
+2914:3200 | Europe
+2914:3275 | Europe regional customer
+2914:3400 | Asia
+2914:3475 | Asia regional customer
+2914:3600 | South America
+2914:3675 | South America regional customer
+
+BGP IPv4 peer filter policy
+
+The following is the NTT DATA filtering policy with its peers:
+
+Inbound
+
+NTT DATA accepts only those prefixes of length /24 and shorter from traditional class A, B, and C space.
+
+NTT DATA uses max-prefix filters at most public exchanges. The max-prefix filter is set to 110% of the greater of the following values:
+
+number of prefixes announced in the last 24 hours
+
+number of prefixes registered in the routing registries under the peer’s as-set if this number is less than 5000.
+
+Outbound
+
+NTT DATA will accept any properly registered prefix from our customers but will announce only /24 and shorter prefixes to our peers.
+
+All NTT DATA announcements are registered in one of the routing registries and included under as-set AS2914:AS-GLOBAL.
+
+NTT DATA reserves the right to modify this policy without prior notice.
+
+BGP IPv6 peer filter policy
+
+The Internet community filters IPV6 announcements based on the IPV6 allocations from ARIN. The allocations (and filtering) are necessary in order to minimize routing table expansion. Any customer requiring BGP multi-homing, now or in the future, should apply for Provider Independent (PI) IPv6 space directly from ARIN. ARIN can also allocate /48 critical infrastructure space if justified (eg. root domain operators). Customers with multiple connections to the NTT DATA network may announce longer prefixes along with their ARIN allocation to effectively manage their inbound traffic, but longer prefixes than /48 will not be propagated beyond the AS2914 backbone.
+
+More information regarding ARIN’s IPv6 assignment and allocation policies can be found here: http://www.arin.net/policy/nrpm.html#six
+
+The following is the NTT DATA filtering policy with its peers:
+
+Inbound
+
+NTT DATA will accept /48 and shorter prefixes from our peers.
+
+Outbound
+
+NTT DATA will announce /48 and shorter prefixes to our peers.
+
+NTT DATA reserves the right to modify this policy without prior notice.
+
+Global IP Network Routing Registry
+
+Attn: NTT DATA Global IP Network utilizes RPKI-aware mode on its Internet Routing Registry service (rr.ntt.net) and will suppress route(6) IRR records that conflict with published RPKI ROAs.
+
+More information on this functionality can be found at the IRRd RPKI integration documentation.
+
+The Global IP Network requires all customers using BGP to register each route that will be advertised in either:
+
+the Global IP Network routing registry, or
+
+one of the Internet routing registries mirrored by in the Global IP Network routing registry
+
+the NIC.br public whois registry at registro.br
+
+the global RPKI using an RPKI ROA
+
+The current list of mirrored registries is:
+
+AFRINIC
+
+ALTDB
+
+APNIC
+
+ARIN
+
+BBOI
+
+BELL
+
+CANARIE
+
+IDNIC
+
+JPIRR
+
+LACNIC
+
+LEVEL3
+
+RADB
+
+REGISTROBR
+
+RIPE
+
+RIPE-NONAUTH
+
+RPKI
+
+TC
+
+Global IP Network customers are welcome to register their routes in the Global IP Network routing registry. For more specific information, please see visit our Routing Registry page.
+
+Note: Please make sure all of your Route Objects (ROs) are registered under your ASN or AS-SET. In addition, we do not recommend relying on proxy ROs. Just as they are automatically created, they can be automatically deleted.
+
+Route Dampening
+
+The Global IP Network does not use route dampening.
+
+BCP 214 / RFC 8327 BGP Session Culling Compliance
+
+The Global IP Network is compliant with BCP 214 / RFC 8327, specifically section 3.1 “Voluntary BGP Session Teardown Recommendations”.
+
+Before NTT DATA Global IP Network commences activities that can cause disruption to flow of data through Internet circuits, NTT DATA Global IP Network will – whenever possible – reduce loss of traffic by issuing an administrative shutdown to all BGP sessions running across the circuit and wait a few minutes for data-plane traffic to subside.
+
+While architectures exist to facilitate quick network reconvergence (such as BGP Prefix Independent Convergence (BGP PIC), NTT DATA Global IP Network cannot assume the remote side has such capabilities. As such, a grace period between the Administrative Shutdown and the impacting maintenance activities is warranted.
+
+After the maintenance activities have concluded, NTT DATA will restore the BGP sessions to their original Administrative state.
+
+Bogon ASN Filter Policy
+
+The Global IP Network will not accept route announcements from any eBGP neighbors which contain a Bogon ASN anywhere in the AS_PATH or its atomic aggregate attribute. Bogon ASNs are defined as 0, 23456, 64496 through 131071 and 4200000000 through 4294967295.
+
+NTT DATA Global IP Network BGP-4 NEXT_HOP Policy
+
+The Global IP Network deviates slightly from the RFC 4271 BGP-4 specification, specifically section 6.3 “UPDATE Message Error Handling”, regarding the contents of the BGP NEXT_HOP attribute.
+
+The NTT DATA Global IP Network has stricter requirements for IP addresses in the BGP NEXT_HOP attribute than RFC 4271 mandates. RFC 4271 allows any IP address that is part of a common subnet between the sending and receiving BGP speaker as a semantically correct NEXT_HOP. However, NTT DATA Global IP Network strictly requires the advertised BGP NEXT_HOP be the sender’s IP address that is used to establish the EBGP connection.
+
+MEDs
+
+The Global IP Network accepts MEDs from its customers.
+
+Graceful BGP Session Shutdown
+
+To reduce the amount of traffic lost when BGP sessions are about to be shut down deliberately, e.g., for planned maintenance, the Global IP Network supports receiving and honoring the Graceful Shutdown BGP community 65535:0 (also known as “GRACEFUL_SHUTDOWN”) on all EBGP sessions.
+
+More information about Graceful BGP Session Shutdown is available in RFC 8326.
+
+Bidirectional Forwarding Detection (BFD) with BGP
+
+NTT DATA’s Global IP Network supports Bidirectional Forwarding Detection (BFD) with Border Gateway Protocol (BGP) to enhance network reliability. This implementation enables quick detection of failures, ensuring that BGP sessions drop within a minimum hold timer of 100 milliseconds when a failure is identified.
+
+The integration of BFD with BGP significantly reduces the time it takes for the network to converge after a failure. This means that routes can be recalculated, and traffic can be rerouted more quickly, enhancing overall network performance.
+
+The hello interval is set to 100 milliseconds, and the hold timer is three times the hello interval, or 300 milliseconds – a vast improvement from the 90 second hold timer of BGP alone.  Additionally, BFD allows for configurable detection intervals. This means that network operators can adjust the parameters based on their specific performance and reliability requirements.
+
+BFD is not supported with ECMP/multi-hop BGP sessions.
+
+BFD is not enabled by default. Contact the NOC for configuration.
+
+BFD Hold Timers
+
+We configure our BFD hold timers to default settings to ensure stable and reliable network performance. If a customer’s detection timer is shorter than 300 milliseconds, the BFD detection timer is 300 milliseconds. If a customer’s detection timer is longer than 300 milliseconds, the BFD detection timer will be set to match the customer’s detection timer.
+
+Additional Benefits of BFD with BGP
+
+BFD can provide failure detection in the microsecond range, which is beneficial for high-performance applications that require immediate failover capabilities.
+
+BFD sessions can be established between routers to monitor the health of the link. If a session fails, BGP can quickly withdraw the affected routes, ensuring that traffic is not sent over a failed path.
+
+BFD is designed to scale efficiently, making it suitable for large networks. It can handle a high number of sessions without significantly impacting CPU or memory resources on routers.
+
+SecureLink and Generalized TTL Security Mechanism
+
+SecureLink 
+
+SecureLink (also known as SecureNet) is a security feature designed to reduce customer exposure to external reconnaissance and certain forms of DDoS attack. SecureLink assigns WAN IP addresses for customer interconnections with the Global IP Network from non-globally-routed address ranges. These addresses are not reachable from the public Internet, which prevents unsolicited traffic from targeting customer WAN interfaces.
+
+Using non-routed addressing lowers resource consumption on customer devices and provides additional protection for both IPv4 and IPv6 interconnections. ICMP packets directed at SecureLink-assigned addresses are also discarded within the GIN backbone. SecureLink may be applied independently to IPv4 and IPv6 sessions, with one or both sessions using the protected address space.
+
+SecureLink is available at no additional charge. New customers may request SecureLink during provisioning, and existing customers may open a ticket with the NOC to have their interconnections renumbered into the SecureLink address ranges.
+
+Generalized TTL Security Mechanism (GTSM)
+
+The Generalized TTL Security Mechanism (GTSM), defined in RFC 5082, is a control-plane protection method that enhances the security of BGP sessions. GTSM uses the predictable behavior of the IP Time-to-Live (TTL) field to ensure that only packets from directly connected peers reach the route processor (RP).
+
+When GTSM is enabled, BGP packets must arrive with a TTL of 255. Packets originating from off-path or remote sources will have decremented TTL values and are discarded in hardware before reaching the RP. This reduces susceptibility to spoofed BGP traffic, route processor flooding, and certain DDoS conditions.
+
+Because GTSM requires matching TTL parameters on both ends of a session, it must be coordinated between peers. Customers wishing to enable GTSM on their sessions with GIN may request assistance through the NOC. GTSM is available at no additional cost.
+
+Comparison of SecureLink and GTSM
+
+The table below summarizes the distinctions between SecureLink and GTSM:
+
+Feature/Aspect | GTSM (RFC 5082) | SecureLink
+Primary Purpose | Protects BGP sessions from off-path spoofing and control-plane CPU attacks | Shields customer WAN IPs from external exposure and DDoS
+Scope of Protection | Control plane (BGP session integrity) | Data plane (customer WAN interface protection)
+Mechanism | Validates TTL = 255 on BGP packets to ensure directly connected peer | Provides non-globally-routable IP ranges inside GIN backbone
+Standards Status | IETF standard (RFC 5082) | Proprietary to NTT DATA Global IP Network
+Protocol Coverage | BGP (and can apply to other routing protocols) | All IP traffic to/from customer WAN interfaces
+Attack Types Mitigated | Off-path spoofing, route processor flooding | Direct external DDoS, unsolicited Internet traffic
+Customer Requirements | Must be configured by both BGP peers | Customer may need to renumber into SecureLink ranges
+Ease of Adoption | Requires technical coordination with peers | Available on request; no charge; GIN assigns IP ranges
+IPv4 / IPv6 Support | Works equally with both | Provides protected ranges in both IPv4 and IPv6 (independent)
+Positioning | Narrow, protocol-specific safeguard | Broader, customer-friendly exposure reduction
+
+NTT DATA’s Global IP Network has chosen to focus on SecureLink as well as deploying Generalized TTL Security Mechanism (GTSM) because SecureLink provides broader and more customer-relevant protection. Whereas GTSM is limited to securing BGP sessions against a narrow class of attacks, SecureLink protects customer WAN interfaces from all external unsolicited traffic by using protected, non-globally-routable IP ranges within our backbone. This approach reduces DDoS exposure, preserves customer edge resources, and works across both IPv4 and IPv6.
+
+By offering SecureLink free of charge, we provide a solution that not only complements protocol-level protections like MD5 but also delivers tangible security benefits for all customer traffic, not just BGP.
+
+Blackhole and Selective Blackhole service
+
+Customers may announce hosts tagged with 2914:666 for v4 and v6 peering. Any /32 or /128 host tagged with this community will be discarded as soon as it reaches our network. The /32 or /128 prefix must be one included in the customer’s existing ingress BGP filter. By default, peers are not configured for the blackhole functionality. Please contact the NTT NOC @ noc@gin.ntt.net for this feature.
+
+As of the beginning of March, 2015, NTT DATA now offers Selective Blackholing. This provides the ability to limit the scope of the blackholing to certain geographic locations, allowing a more strategic application of the blackhole service.
+
+Selective Blackhole communities
+2914:661 | only blackhole inside the region the announcement originated
+2914:663 | only blackhole inside the country the announcement originated
+2914:660 | only blackhole outside the region the announcement originated
+2914:664 | only blackhole outside the country the announcement originated
+
+Policy for prefix origination from Global IP Network equipment and ASNs
+
+Parties seeking to announce prefixes originating from Global IP Network-operated equipment or originating from a Global IP Network-operated ASN will be required to publish and maintain a valid RPKI ROA with an origin of the relevant ASN (typically AS2914) covering the announcement.
+
+Global IP Network will cease to announce any prefixes for which a valid covering RPKI ROA with the relevant origin AS is no longer available within 3 business days of such an event taking place. This policy will apply even in instances where no conflicting RPKI ROA exists for the announced prefix.
+
