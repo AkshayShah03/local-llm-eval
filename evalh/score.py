@@ -1,6 +1,7 @@
 """Add deterministic and judge scores to raw responses."""
 import argparse
 import asyncio
+import hashlib
 import os
 import sys
 from contextlib import AsyncExitStack
@@ -45,10 +46,14 @@ def judge_inputs(task: str, item: dict, record: dict, index: Index) -> tuple[str
     return None
 
 
+def input_hash(question: str, facts: list, context: str, answer: str) -> str:
+    return hashlib.sha256("\x00".join((answer, context, question)).encode()).hexdigest()
+
+
 async def score_run(raw: list[dict], items: dict, index: Index, judge_client, judge_name: str,
                     cache_path: Path, out: Path) -> None:
     """Write scored records to out. Successful judgements are cached; failures are not, so a rerun retries them."""
-    cache = {(c["config"], c["item_id"], c["judge"]): c["scores"] for c in read_jsonl(cache_path)}
+    cache = {(c["config"], c["item_id"], c["judge"]): c for c in read_jsonl(cache_path) if "input_hash" in c}
     out.unlink(missing_ok=True)
     for r in raw:
         if r["type"] != "response":
@@ -59,18 +64,22 @@ async def score_run(raw: list[dict], items: dict, index: Index, judge_client, ju
         inputs = judge_inputs(task, item, r, index)
         if inputs and r["repeat"] == 1 and not scores["failed"]:
             key = (r["config"], r["item_id"], judge_name)
-            if key not in cache:
+            digest = input_hash(*inputs, r["result"]["content"])
+            if key not in cache or cache[key]["input_hash"] != digest:
+                cache.pop(key, None)
                 verdict = await judge(judge_client, judge_name, *inputs, r["result"]["content"])
                 if verdict is None:
                     print(f"warning: judge failed for {r['config']} {r['item_id']}", file=sys.stderr, flush=True)
                     scores["judge_failed"] = True
                 else:
-                    cache[key] = verdict
-                    append_jsonl(cache_path, {"config": key[0], "item_id": key[1], "judge": key[2],
-                                              "scores": verdict})
+                    entry = {"config": key[0], "item_id": key[1], "judge": key[2], "input_hash": digest,
+                             "scores": verdict}
+                    cache[key] = entry
+                    append_jsonl(cache_path, entry)
             if key in cache:
-                scores.update({"correctness": cache[key]["correctness"],
-                               "faithfulness": cache[key]["faithfulness"], "judge_reason": cache[key]["reason"]})
+                v = cache[key]["scores"]
+                scores.update({"correctness": v["correctness"], "faithfulness": v["faithfulness"],
+                               "judge_reason": v["reason"]})
         append_jsonl(out, {**r, "scores": scores, "judge": judge_name})
 
 
@@ -92,7 +101,7 @@ async def main() -> None:
     async with AsyncExitStack() as stack:
         client = hosted_client() if args.judge == "hosted" else OllamaClient()
         judge_client = await stack.enter_async_context(client)
-        judge_name = args.judge
+        judge_name = os.environ["HOSTED_MODEL"] if args.judge == "hosted" else args.judge
         await score_run(raw, items, index, judge_client, judge_name, ROOT / "results/judge-cache.jsonl", out)
     print(f"wrote {out}")
 

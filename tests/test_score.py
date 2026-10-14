@@ -127,3 +127,28 @@ def test_main_requires_hosted_key(monkeypatch, capsys):
         asyncio.run(score.main())
     assert e.value.code != 0
     assert "HOSTED_API_KEY" in capsys.readouterr().err
+
+
+def test_cache_hit_on_unchanged_input(tmp_path):
+    raw, items, index, cache, out = setup(tmp_path)
+    asyncio.run(score_run(raw, items, index, FakeJudge([GOOD, GOOD, GOOD]), "m1", cache, out))
+    jc = FakeJudge([])
+    asyncio.run(score_run(raw, items, index, jc, "m1", cache, out))
+    assert jc.calls == 0
+
+
+def test_changed_judge_model_rejudges(tmp_path):
+    raw, items, index, cache, out = setup(tmp_path)
+    asyncio.run(score_run(raw, items, index, FakeJudge([GOOD, GOOD, GOOD]), "m1", cache, out))
+    jc = FakeJudge([GOOD, GOOD, GOOD])
+    asyncio.run(score_run(raw, items, index, jc, "m2", cache, out))
+    assert jc.calls == 3
+
+
+def test_changed_answer_rejudges(tmp_path):
+    raw, items, index, cache, out = setup(tmp_path)
+    asyncio.run(score_run(raw, items, index, FakeJudge([GOOD, GOOD, GOOD]), "m1", cache, out))
+    raw[1] = response("m", "rag", "r1", 1, content="a different answer", retrieved=["c1"])
+    jc = FakeJudge([GOOD])
+    asyncio.run(score_run(raw, items, index, jc, "m1", cache, out))
+    assert jc.calls == 1
