@@ -93,6 +93,8 @@ def test_percentile():
     ("the community known as 65535:666", "65535:666"),
     ("Peer AS 2914 is up", "AS2914"),
     ("Peer AS2914 is up", "AS 2914"),
+    ("Peer AS-2914 is up", "AS 2914"),
+    ("Peer AS_2914 is up", "AS 2914"),
     ("peer as2914 is up", "AS 2914"),
     ("The hold timer is 90.", "90"),
     ("Use 65535:666, then drop.", "65535:666"),
@@ -124,6 +126,11 @@ def test_fact_no_match(text, fact):
     "That information is not provided in the context.",
     "There is no mention of pricing in the passages.",
     "I cannot answer that.",
+    "There is no information about pricing in the documents.",
+    "The provided context has no information about pricing.",
+    "I could not find this in the provided documents.",
+    "I am not able to answer from the context.",
+    "The answer is not stated in the context.",
 ])
 def test_refusal_positive(text):
     assert is_refusal(text)
@@ -136,6 +143,9 @@ def test_refusal_positive(text):
     "no information is lost",
     "The RIB doesn't contain the prefix",
     "The hold timer default is 90 seconds.",
+    "If the source does not have a valid route, the packet is dropped.",
+    "The update text doesn't include the community.",
+    "The router could not find a valid route.",
 ])
 def test_refusal_negative(text):
     assert not is_refusal(text)
