@@ -1,0 +1,20 @@
+{
+  "bgp_sessions": [
+    {"router": "r1.dal", "neighbor": "192.0.2.1", "peer_asn": 64500, "peer_name": "ExampleNet", "state": "Established", "uptime_s": 864000, "prefixes_received": 812},
+    {"router": "r2.lax", "neighbor": "198.51.100.9", "peer_asn": 64501, "peer_name": "TransitCo", "state": "Idle", "uptime_s": 0, "prefixes_received": 0, "last_error": "Hold Timer Expired"},
+    {"router": "r2.lax", "neighbor": "2001:db8::5", "peer_asn": 64502, "peer_name": "CDN-East", "state": "Active", "uptime_s": 0, "prefixes_received": 0, "last_error": "Connect retry"},
+    {"router": "r3.ams", "neighbor": "203.0.113.17", "peer_asn": 64503, "peer_name": "EuroIX-RS", "state": "Established", "uptime_s": 3600, "prefixes_received": 152340},
+    {"router": "r3.ams", "neighbor": "192.0.2.77", "peer_asn": 64504, "peer_name": "SmallISP", "state": "Established", "uptime_s": 120, "prefixes_received": 3, "flaps_24h": 14}
+  ],
+  "prefixes": [
+    {"prefix": "203.0.113.0/24", "origin_asn": 64500, "expected_origin_asn": 64500, "rpki": "valid"},
+    {"prefix": "198.51.100.0/24", "origin_asn": 64511, "expected_origin_asn": 64501, "rpki": "invalid"},
+    {"prefix": "192.0.2.0/24", "origin_asn": 64504, "expected_origin_asn": 64504, "rpki": "not-found"},
+    {"prefix": "2001:db8:1000::/36", "origin_asn": 64502, "expected_origin_asn": 64502, "rpki": "valid"}
+  ],
+  "interfaces": [
+    {"router": "r1.dal", "interface": "et-0/0/1", "oper_status": "up", "in_errors": 0, "out_errors": 0, "crc_errors": 0},
+    {"router": "r2.lax", "interface": "et-0/0/3", "oper_status": "up", "in_errors": 15890, "out_errors": 2, "crc_errors": 15234},
+    {"router": "r3.ams", "interface": "xe-1/2/0", "oper_status": "down", "in_errors": 0, "out_errors": 0, "crc_errors": 0}
+  ]
+}
