@@ -1,4 +1,4 @@
-from evalh.run import done_keys, is_outage, order_items, undone_keys
+from evalh.run import classify, done_keys, is_outage, order_items, undone_keys
 
 
 def test_done_keys_only_counts_responses():
@@ -15,11 +15,19 @@ def test_order_items_is_seeded_and_differs_per_repeat():
     assert sorted(x["id"] for x in a1) == sorted(x["id"] for x in items)
 
 
+def test_classify_is_the_single_source():
+    assert classify(None) == "ok"
+    assert classify("timeout") == classify("http 400: x") == "expected"
+    assert classify("http 429: x") == classify("ConnectError: x") == "outage"
+    assert classify("ollama: boom") == "failed"
+
+
 def test_is_outage_only_transport_failures():
     for e in ("ConnectError: refused", "ReadError: x", "RemoteProtocolError: eof", "WriteError: y",
-              "http 502: bad gateway", "http 503: down", "http 504: t/o"):
+              "http 502: bad gateway", "http 503: down", "http 504: t/o", "http 401: no", "http 403: no",
+              "http 408: slow", "http 429: rate", "http 529: overloaded"):
         assert is_outage(e), e
-    for e in (None, "timeout", "first_token_timeout", "http 400: x", "http 404: x", "http 500: boom",
+    for e in (None, "timeout", "first_token_timeout", "http 400: x", "http 404: x", "http 422: x", "http 500: boom",
               "ollama: model runner crashed", "api: bad", "JSONDecodeError: x", "KeyError: 'x'"):
         assert not is_outage(e), e
 
@@ -158,3 +166,37 @@ async def test_ollama_client_tags():
         m.get("/api/tags").respond(json={"models": [{"name": "a:latest", "digest": "d1"}]})
         async with OllamaClient() as c:
             assert await c.tags() == [{"name": "a:latest", "digest": "d1"}]
+
+
+async def test_auth_errors_abort_after_five_and_are_not_recorded(tmp_path):
+    client = FakeClient(errors={"all": "http 401: bad key"})
+    with pytest.raises(RunAborted):
+        await _run(tmp_path, client)
+    assert not [r for r in read_jsonl(tmp_path / "raw.jsonl") if r["type"] == "response"]
+    assert len(read_jsonl(tmp_path / "err.jsonl")) == 5
+
+
+async def test_rate_limit_retried_then_recorded_once(tmp_path):
+    client = FakeClient(errors={1: "http 429: slow down", 2: "http 529: busy"})
+    sleeps = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    recs = await _run(tmp_path, client, sleep=fake_sleep)
+    resp = [r for r in recs if r["type"] == "response"]
+    assert len(resp) == 8 and not any(r["result"]["error"] for r in resp)
+    assert len({r["item_id"] for r in resp}) == 8
+    assert sleeps == [2, 2] or sleeps == [2, 4]
+    assert not (tmp_path / "err.jsonl").exists()
+
+
+async def test_rate_limit_exhausted_counts_as_outage(tmp_path):
+    client = FakeClient(errors={"all": "http 429: slow down"})
+
+    async def fake_sleep(s):
+        pass
+
+    with pytest.raises(RunAborted):
+        await _run(tmp_path, client, sleep=fake_sleep)
+    assert len(read_jsonl(tmp_path / "err.jsonl")) == 5

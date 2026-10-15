@@ -39,7 +39,10 @@ EMBED_MODEL = "nomic-embed-text"
 # Connection-level failures from httpx, formatted by the client as "<ExcName>: ...".
 TRANSPORT_ERRORS = ("ConnectError", "ReadError", "WriteError", "CloseError", "RemoteProtocolError",
                     "LocalProtocolError", "NetworkError", "ProxyError", "UnsupportedProtocol")
-OUTAGE_HTTP = ("http 502", "http 503", "http 504")
+# Auth, request-timeout, rate-limit and gateway/overload statuses: not a property of the prompt.
+OUTAGE_HTTP = ("http 401", "http 403", "http 408", "http 429", "http 502", "http 503", "http 504", "http 529")
+RETRY_HTTP = ("http 429", "http 529")
+RETRY_BACKOFF = (2, 4, 8)
 MAX_CONSECUTIVE_ERRORS = 5
 HOSTED_VARS = ("HOSTED_BASE_URL", "HOSTED_API_KEY", "HOSTED_MODEL")
 
@@ -67,14 +70,29 @@ def order_items(items: list[dict], repeat: int) -> list[dict]:
 
 
 def is_outage(error: str | None) -> bool:
-    """Only transport failures and gateway-style 502/503/504 mean the server is unavailable. Those are
-    retried on resume. Every other error (in-stream errors, other 5xx, decode errors) can be triggered
-    deterministically by the prompt, so it is recorded as a failed response and scored."""
+    """Server or account unavailable, not caused by the prompt: transport failures and the statuses in
+    OUTAGE_HTTP. Retried on resume. Every other error (in-stream errors, other 5xx, decode errors) can be
+    triggered deterministically by the prompt, so it is recorded as a failed response and scored."""
     if not error:
         return False
     if error.startswith("http "):
         return error[:8] in OUTAGE_HTTP
     return error.split(":", 1)[0] in TRANSPORT_ERRORS
+
+
+def classify(error: str | None) -> str:
+    """ok | expected (timeout, http 4xx: recorded quietly) | outage (not recorded) | failed (recorded, warned)."""
+    if not error:
+        return "ok"
+    if is_outage(error):
+        return "outage"
+    if error in ("timeout", "first_token_timeout") or error.startswith("http 4"):
+        return "expected"
+    return "failed"
+
+
+def is_retryable(error: str | None) -> bool:
+    return bool(error) and error.startswith("http ") and error[:8] in RETRY_HTTP
 
 
 def undone_keys(models: list[ModelConfig], tasks, items, repeats, done) -> list[tuple]:
@@ -130,7 +148,8 @@ def _now() -> str:
 
 
 async def run_model(model: ModelConfig, client, ollama, tasks, items, index, retrieved, defaults, out, done,
-                    run_id, repeats, errors_path=None, hosted=None, max_consecutive=MAX_CONSECUTIVE_ERRORS):
+                    run_id, repeats, errors_path=None, hosted=None, max_consecutive=MAX_CONSECUTIVE_ERRORS,
+                    sleep=asyncio.sleep):
     options = {k: defaults[k] for k in ("temperature", "seed", "num_ctx", "num_predict")}
     is_local = model.provider == "ollama"
     errors_path = errors_path or Path(out).with_name(f"errors-{run_id}.jsonl")
@@ -166,8 +185,14 @@ async def run_model(model: ModelConfig, client, ollama, tasks, items, index, ret
                     key = (model.name, task, item["id"], repeat)
                     if key in done:
                         continue
-                    result = await client.chat(model.name, build_messages(task, item, index, retrieved),
-                                               tools=TOOLS if task == "tools" else None, options=options)
+                    for delay in (*RETRY_BACKOFF, None):
+                        result = await client.chat(model.name, build_messages(task, item, index, retrieved),
+                                                   tools=TOOLS if task == "tools" else None, options=options)
+                        if delay is None or not is_retryable(result.error):
+                            break
+                        print(f"{model.name} {item['id']}: {result.error}; retrying in {delay}s",
+                              file=sys.stderr, flush=True)
+                        await sleep(delay)
                     if is_outage(result.error):
                         consecutive += 1
                         msg = f"!! OUTAGE {model.name} {item['id']}: {result.error}"
@@ -181,8 +206,7 @@ async def run_model(model: ModelConfig, client, ollama, tasks, items, index, ret
                                 f"failed items were not recorded as done.")
                         continue
                     consecutive = 0
-                    if result.error and result.error not in ("timeout", "first_token_timeout") \
-                            and not result.error.startswith("http 4"):
+                    if classify(result.error) == "failed":
                         print(f"!! recorded failed response {model.name} {item['id']}: {result.error}",
                               file=sys.stderr, flush=True)
                     append_jsonl(out, {"type": "response", **base, "task": task,
