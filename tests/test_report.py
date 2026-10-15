@@ -71,7 +71,7 @@ def test_recommend_without_hosted_and_with_hosted():
     assert recommend(ev, {"a": 1}) == {"u": "hosted"}
 
 
-def test_failed_responses_count_in_failure_rate_only():
+def test_failed_response_counts_in_failure_rate_not_latency():
     rows = tool_rows("m", 10, 1.0)
     rows.append(resp("m", "tools", "t0", 3, 9.0, {"failed": True}))
     m = agg(rows)["m"]["tools"]
@@ -159,7 +159,7 @@ def test_timeouts_count_as_wrong_and_slow():
     metrics = agg(rows)
     m = metrics["m"]["tools"]
     assert m["tool_selection"] == 0.5 and m["args_exact"] == 0.5 and m["invalid_rate"] == 0.0
-    assert m["n_metrics"]["invalid_rate"] == 10 and m["latency_p95_s"] == 120.0
+    assert m["n_metrics"]["invalid_rate"] == 5 and m["latency_p95_s"] == 120.0
     acc = {"noc_tools": {"task": "tools", "criteria": {"tool_selection": {"min": 0.9}, "latency_p95_s": {"max": 4.0}}}}
     assert evaluate(acc, metrics)["noc_tools"]["m"] == {"pass": False, "failed": ["tool_selection", "latency_p95_s"]}
 
@@ -179,7 +179,7 @@ def test_failed_rag_unanswerable_refusal_false_and_judge_missing():
     assert m["refusal_unanswerable"] == 0.0 and m["judge_missing_failed_response"] == 0 and m["judged"] == 1
     tri = resp("m", "triage", "t", 1, 1.0, {"failed": True})
     mt = agg([tri])["m"]["triage"]
-    assert mt["fact_recall"] == 0.0 and mt["correctness"] is None and mt["judge_missing_failed_response"] == 1
+    assert mt["fact_recall"] == 0.0 and mt["correctness"] == 1.0 and mt["judge_missing_failed_response"] == 1
 
 
 def test_item_metadata_exact_when_every_config_failed_it():
@@ -191,7 +191,7 @@ def test_item_metadata_exact_when_every_config_failed_it():
     metrics = agg(rows)
     assert metrics["m"]["rag"]["refusal_unanswerable"] == 0.0 and metrics["m"]["rag"]["n_metrics"]["fact_recall"] == 0
     t = metrics["m"]["tools"]
-    assert t["abstain_ok"] == 0.0 and t["n_metrics"]["tool_selection"] == 0 and t["n_metrics"]["invalid_rate"] == 1
+    assert t["abstain_ok"] == 0.0 and t["n_metrics"]["tool_selection"] == 0 and t["n_metrics"]["invalid_rate"] == 0
 
 
 def test_quality_vs_baseline_is_paired():
@@ -253,3 +253,30 @@ def test_render_end_to_end(tmp_path):
     assert "(n=" in text and "undefined" in text
     cells = [c.strip() for line in text.splitlines() if line.startswith("|") for c in line.split("|")]
     assert not any("nan" in c.lower().split() or c.lower().startswith("nan") for c in cells)
+
+
+def test_triage_failures_count_against_baseline():
+    rows = [triage_row("hosted", f"h{i}", 5) for i in range(10)]
+    for i in range(10):
+        if i < 2:
+            rows.append(triage_row("m", f"h{i}", 5))
+        else:
+            r = resp("m", "triage", f"h{i}", 1, 120.0, {"failed": True})
+            r["result"]["error"] = "timeout"
+            rows.append(r)
+    metrics = agg(rows)
+    assert metrics["m"]["triage"]["quality_vs_baseline"] < -0.5
+    assert metrics["m"]["triage"]["n_metrics"]["quality_vs_baseline"] == 10
+    acc = {"t": {"task": "triage", "criteria": {"quality_vs_baseline": {"min": -0.1}}}}
+    assert evaluate(acc, metrics)["t"]["m"]["pass"] is False
+
+
+def test_lower_is_better_rates_exclude_failed_items():
+    rows = tool_rows("m", 10, 1.0)
+    rows.append(timeout_row("m", "x"))
+    assert agg(rows)["m"]["tools"]["n_metrics"]["invalid_rate"] == 10
+    rag = [rag_row("m", "a", True, 1.0, True)]
+    f = resp("m", "rag", "b", 1, 1.0, {"failed": True})
+    f["result"]["error"] = "timeout"
+    m = agg(rag + [f])["m"]["rag"]
+    assert m["false_refusal"] == 1.0 and m["n_metrics"]["false_refusal"] == 1

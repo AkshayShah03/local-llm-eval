@@ -76,7 +76,7 @@ def _zero_scores(task: str, info: dict) -> dict:
     if task == "tools":
         return {"failed": True, "expects_tool": info["expects_tool"], "selection_ok": False,
                 "args_ok": False, "invalid": False, "no_judge": True}
-    return {"failed": True, "fact_recall": 0.0, "no_judge": True}
+    return {"failed": True, "fact_recall": 0.0, "correctness": 1.0, "no_judge": True}
 
 
 def load_item_info(questions_dir: Path) -> dict:
@@ -130,7 +130,7 @@ def _task_metrics(task: str, rows: list[dict], info: dict | None = None) -> dict
             "faithfulness": mean_of("faithfulness", (x.get("faithfulness") for x in judged_ok)),
             "correctness": mean_of("correctness", (x.get("correctness") for x in judged_ok)),
             "refusal_unanswerable": mean_of("refusal_unanswerable", (x.get("refused") for x in unans)),
-            "false_refusal": mean_of("false_refusal", (x.get("refused") for x in ans)),
+            "false_refusal": mean_of("false_refusal", (x.get("refused") for x in ans if not x.get("failed"))),
             "retrieval_hit": mean_of("retrieval_hit", (x.get("retrieval_hit") for x in ans)),
         })
         judged_pool = ans
@@ -139,14 +139,14 @@ def _task_metrics(task: str, rows: list[dict], info: dict | None = None) -> dict
         m.update({
             "tool_selection": mean_of("tool_selection", (x["selection_ok"] for x in tool)),
             "args_exact": mean_of("args_exact", (x["args_ok"] for x in tool)),
-            "invalid_rate": mean_of("invalid_rate", (x["invalid"] for x in s)),
+            "invalid_rate": mean_of("invalid_rate", (x["invalid"] for x in s if not x.get("failed"))),
             "abstain_ok": mean_of("abstain_ok", (x["selection_ok"] for x in s if not x["expects_tool"])),
         })
         judged_pool = []
     else:
         m.update({"fact_recall": mean_of("fact_recall", (x.get("fact_recall") for x in s)),
                   "correctness": mean_of("correctness", (x.get("correctness") for x in s
-                                                         if not x.get("judge_failed") and not x.get("no_judge")))})
+                                                         if not x.get("judge_failed")))})
         judged_pool = s
     if task != "tools":
         m["judge_failed"] = sum(bool(x.get("judge_failed")) for x in judged_pool)
@@ -157,10 +157,19 @@ def _task_metrics(task: str, rows: list[dict], info: dict | None = None) -> dict
     return m
 
 
-def _triage_correctness(rows: list[dict]) -> dict:
-    return {r["item_id"]: float(r["scores"]["correctness"]) for r in rows
-            if r["repeat"] == 1 and not r["scores"].get("failed") and not r["scores"].get("judge_failed")
-            and r["scores"].get("correctness") is not None}
+def _triage_correctness(rows: list[dict], failed_as: float | None = None) -> dict:
+    """Judged correctness per item (repeat 1). With failed_as, a failed response scores that value."""
+    out = {}
+    for r in rows:
+        sc = r["scores"]
+        if r["repeat"] != 1:
+            continue
+        if sc.get("failed"):
+            if failed_as is not None:
+                out[r["item_id"]] = failed_as
+        elif not sc.get("judge_failed") and sc.get("correctness") is not None:
+            out[r["item_id"]] = float(sc["correctness"])
+    return out
 
 
 def aggregate(scored: list[dict], questions_dir: Path | None = None) -> dict:
@@ -175,7 +184,7 @@ def aggregate(scored: list[dict], questions_dir: Path | None = None) -> dict:
     base = _triage_correctness(groups.get((HOSTED, "triage"), []))
     for config, tasks in out.items():
         if "triage" in tasks:
-            mine = _triage_correctness(groups[(config, "triage")])
+            mine = _triage_correctness(groups[(config, "triage")], failed_as=1.0)
             paired = [i for i in mine if i in base]
             m = tasks["triage"]
             m["n_metrics"]["quality_vs_baseline"] = len(paired)
@@ -413,10 +422,17 @@ def render(run_id: str, results_dir: Path | None = None, out_dir: Path | None = 
                 lines.append(f"| {c} | failed to load | – |")
         lines.append("")
 
-    lines += ["", "Latency notes: p50/p95 and TTFT exclude responses that triggered a model reload "
-              f"(load_s > {RELOAD_LOAD_S} s) and include timeouts at their recorded total_s, which is a "
-              "conservative lower bound on the true latency. Other failed responses are excluded from latency. "
-              "Failed repeat-1 items count as wrong in quality rates."]
+    lines += ["", "Notes on failures and latency:",
+              "- Latency p50/p95 and TTFT exclude responses that triggered a model reload "
+              f"(load_s > {RELOAD_LOAD_S} s). Timeouts are included at their recorded total_s, a conservative "
+              "lower bound on the true latency. Other failed responses are excluded from latency.",
+              "- Higher-is-better quality rates (fact_recall, tool_selection, args_exact, abstain_ok, "
+              "refusal_unanswerable) count a failed repeat-1 item as wrong.",
+              "- Lower-is-better rates (invalid_rate, false_refusal) exclude failed items, so they are not "
+              "flattered; failure_rate reports the failures.",
+              "- Judge means (faithfulness, correctness) exclude failed responses and judge failures, except "
+              "triage correctness, where a failed item scores 1 (bottom of the scale). quality_vs_baseline is "
+              "computed on items with a judged hosted score."]
     out.mkdir(parents=True, exist_ok=True)
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     if charts:
