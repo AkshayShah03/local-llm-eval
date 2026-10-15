@@ -71,7 +71,7 @@ def format_report(result: dict) -> str:
 
 def _show(q: dict, record: dict, print_fn=print) -> None:
     """Show the question, reference facts and answer. Config name and judge score stay hidden."""
-    facts = "\n".join("  - " + " | ".join(f) for f in q["required_facts"])
+    facts = "\n".join("  - " + (" | ".join(f) if isinstance(f, list) else f) for f in q["required_facts"])
     print_fn("\n" + "=" * 80)
     print_fn("QUESTION:", q.get("question") or q["log"][:800])
     print_fn("REFERENCE FACTS (any alternative on a line counts):\n" + facts)

@@ -65,3 +65,12 @@ def test_cli_labels_two_items_and_report(tmp_path, capsys):
     main(["--run-id", "r1", "--report"], labels_path=labels, root=root)
     report = capsys.readouterr().out
     assert "n: 2" in report and "kappa_binary: 1.000" in report
+
+
+def test_show_formats_string_and_alias_facts():
+    from evalh.label import _show
+    lines = []
+    _show({"question": "Q?", "required_facts": ["65535:666", ["drop", "discard"]]},
+          {"result": {"content": "A"}}, print_fn=lambda *a: lines.append(" ".join(map(str, a))))
+    text = "\n".join(lines)
+    assert "  - 65535:666" in text and "  - drop | discard" in text
