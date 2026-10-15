@@ -13,7 +13,7 @@ from evalh.clients.base import ChatResult
 from gateway.app import build_default_app, create_app
 from gateway.breaker import CircuitBreaker
 from gateway.config import Backend, ConfigError, GatewayConfig, Route, load_config, validate
-from gateway.router import Router
+from gateway.router import BadRequest, Router
 
 TOOL = [{"type": "function", "function": {"name": "get_bgp_session", "parameters": {
     "type": "object", "properties": {"neighbor": {"type": "string"}}, "required": ["neighbor"]}}}]
@@ -114,13 +114,22 @@ async def test_log_lines_are_json(caplog):
         json.loads(m)
 
 
+def _sample(client, prefix):
+    for line in client.get("/metrics").text.splitlines():
+        if line.startswith(prefix):
+            return float(line.rsplit(" ", 1)[1])
+    return 0.0
+
+
 def test_http_api_headers():
     router = Router(cfg(["a", "b"]), {"a": Scripted(ChatResult.failed("timeout", 1)), "b": Scripted()}, CircuitBreaker())
     client = TestClient(create_app(router))
+    before = _sample(client, 'gateway_fallbacks_total{backend="a",reason="timeout",route="r"}')
     r = client.post("/v1/chat", json={"route": "r", "messages": [{"role": "user", "content": "x"}]})
     assert r.status_code == 200
     assert r.headers["x-served-by"] == "b" and r.headers["x-fallback-reason"] == "timeout"
-    assert "gateway_fallbacks_total" in client.get("/metrics").text
+    after = _sample(client, 'gateway_fallbacks_total{backend="a",reason="timeout",route="r"}')
+    assert after - before == 1
     assert client.post("/v1/chat", json={"route": "nope", "messages": []}).status_code == 404
 
 
@@ -150,3 +159,80 @@ def test_default_app_closes_clients_and_skips_hosted(monkeypatch):
         http = router.clients["qwen7b"]._http
         assert not http.is_closed
     assert http.is_closed
+
+
+def test_half_open_allows_single_trial():
+    now = [0.0]
+    b = CircuitBreaker(threshold=1, cooldown_s=30, clock=lambda: now[0])
+    b.record("a", False)
+    now[0] = 31
+    assert b.allow("a")
+    assert not b.allow("a")  # trial in flight
+    now[0] = 62
+    assert b.allow("a")  # next cooldown elapsed without a recorded result
+
+
+def test_half_open_failed_trial_reopens_and_success_closes():
+    now = [0.0]
+    b = CircuitBreaker(threshold=3, cooldown_s=30, clock=lambda: now[0])
+    for _ in range(3):
+        b.record("a", False)
+    now[0] = 31
+    assert b.allow("a")
+    b.record("a", False)
+    assert not b.allow("a")
+    now[0] = 62
+    assert b.allow("a")
+    b.record("a", True)
+    assert b.allow("a") and b.allow("a")
+
+
+@pytest.mark.parametrize("error", ["http 400: bad", "http 404: model not found"])
+async def test_http_4xx_does_not_open_breaker(error):
+    breaker = CircuitBreaker(threshold=1)
+    router = Router(cfg(["a", "b"]), {"a": Scripted(ChatResult.failed(error, 1)), "b": Scripted()}, breaker)
+    out = await router.chat("r", [])
+    assert out.attempts == [("a", "error")] and breaker.allow("a")
+
+
+@pytest.mark.parametrize("error", ["http 500: x", "http 429: slow down", "timeout"])
+async def test_health_failures_open_breaker(error):
+    breaker = CircuitBreaker(threshold=1)
+    router = Router(cfg(["a", "b"]), {"a": Scripted(ChatResult.failed(error, 1)), "b": Scripted()}, breaker)
+    await router.chat("r", [])
+    assert not breaker.allow("a")
+
+
+async def test_invalid_tool_call_does_not_open_breaker():
+    bad = ChatResult(tool_calls=[{"name": "get_bgp_session", "arguments": {}}])
+    breaker = CircuitBreaker(threshold=1)
+    router = Router(cfg(["a", "b"]), {"a": Scripted(bad), "b": Scripted()}, breaker)
+    await router.chat("r", [], tools=TOOL)
+    assert breaker.allow("a")
+
+
+async def test_bad_tool_schema_is_bad_request():
+    bad_tool = [{"type": "function", "function": {"name": "f", "parameters": {"type": "nonsense"}}}]
+    a = Scripted()
+    router = Router(cfg(["a"]), {"a": a}, CircuitBreaker())
+    with pytest.raises(BadRequest):
+        await router.chat("r", [], tools=bad_tool)
+    assert a.calls == 0
+    r = TestClient(create_app(router)).post("/v1/chat", json={"route": "r", "messages": [], "tools": bad_tool})
+    assert r.status_code == 400
+    r = TestClient(create_app(router)).post("/v1/chat", json={"route": "r", "messages": [], "tools": [{"x": 1}]})
+    assert r.status_code == 400
+
+
+@pytest.mark.parametrize("missing", ["HOSTED_BASE_URL", "HOSTED_API_KEY", "HOSTED_MODEL"])
+def test_partial_hosted_env_means_no_hosted_backend(monkeypatch, missing):
+    for k in ("HOSTED_BASE_URL", "HOSTED_API_KEY", "HOSTED_MODEL"):
+        monkeypatch.setenv(k, "x")
+    monkeypatch.delenv(missing)
+    assert "hosted" not in build_default_app().state.router.clients
+
+
+def test_full_hosted_env_adds_hosted_backend(monkeypatch):
+    for k in ("HOSTED_BASE_URL", "HOSTED_API_KEY", "HOSTED_MODEL"):
+        monkeypatch.setenv(k, "http://localhost:1" if k.endswith("URL") else "x")
+    assert "hosted" in build_default_app().state.router.clients

@@ -11,7 +11,7 @@ from evalh.clients.ollama import OllamaClient
 from evalh.clients.openai_compat import OpenAICompatClient
 from gateway.breaker import CircuitBreaker
 from gateway.config import load_config
-from gateway.router import Router
+from gateway.router import BadRequest, Router
 
 
 class ChatRequest(BaseModel):
@@ -39,7 +39,10 @@ def create_app(router: Router) -> FastAPI:
     async def chat(req: ChatRequest):
         if req.route not in router.config.routes:
             raise HTTPException(404, f"unknown route {req.route}")
-        out = await router.chat(req.route, req.messages, req.tools)
+        try:
+            out = await router.chat(req.route, req.messages, req.tools)
+        except BadRequest as e:
+            raise HTTPException(400, str(e)) from e
         reasons = ",".join(r for _, r in out.attempts)
         if out.result is None:
             return JSONResponse({"error": "all backends failed", "attempts": out.attempts}, status_code=503,

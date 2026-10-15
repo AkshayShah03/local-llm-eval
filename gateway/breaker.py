@@ -13,7 +13,15 @@ class CircuitBreaker:
 
     def allow(self, name: str) -> bool:
         opened = self._opened_at.get(name)
-        return opened is None or self.clock() - opened >= self.cooldown_s
+        if opened is None:
+            return True
+        now = self.clock()
+        if now - opened >= self.cooldown_s:
+            # Half-open: let exactly one trial through, then re-arm so concurrent and
+            # subsequent callers are skipped until the trial is recorded (or another cooldown passes).
+            self._opened_at[name] = now
+            return True
+        return False
 
     def record(self, name: str, ok: bool) -> None:
         if ok:
