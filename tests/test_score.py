@@ -152,3 +152,12 @@ def test_changed_answer_rejudges(tmp_path):
     jc = FakeJudge([GOOD])
     asyncio.run(score_run(raw, items, index, jc, "m1", cache, out))
     assert jc.calls == 1
+
+
+def test_changed_required_facts_rejudges(tmp_path):
+    raw, items, index, cache, out = setup(tmp_path)
+    asyncio.run(score_run(raw, items, index, FakeJudge([GOOD, GOOD, GOOD]), "m1", cache, out))
+    items["r1"][1]["required_facts"] = ["65535:666", "extra"]
+    jc = FakeJudge([GOOD])
+    asyncio.run(score_run(raw, items, index, jc, "m1", cache, out))
+    assert jc.calls == 1

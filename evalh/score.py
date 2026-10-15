@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import hashlib
+import json
 import os
 import sys
 from contextlib import AsyncExitStack
@@ -47,7 +48,7 @@ def judge_inputs(task: str, item: dict, record: dict, index: Index) -> tuple[str
 
 
 def input_hash(question: str, facts: list, context: str, answer: str) -> str:
-    return hashlib.sha256("\x00".join((answer, context, question)).encode()).hexdigest()
+    return hashlib.sha256("\x00".join((answer, context, question, json.dumps(facts, sort_keys=True))).encode()).hexdigest()
 
 
 async def score_run(raw: list[dict], items: dict, index: Index, judge_client, judge_name: str,
