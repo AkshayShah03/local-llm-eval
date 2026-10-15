@@ -1,0 +1,22 @@
+backends:
+  qwen7b:  {provider: ollama, model: qwen2.5:7b-instruct-q4_K_M}
+  llama8b: {provider: ollama, model: llama3.1:8b-instruct-q4_K_M}
+  qwen3b:  {provider: ollama, model: qwen2.5:3b-instruct-q4_K_M}
+  hosted:  {provider: openai_compat, model: env}
+
+routes:
+  noc-assistant:
+    data_class: internal        # device names and customer prefixes never leave the box
+    chain: [qwen7b, llama8b]
+    first_token_timeout_s: 3
+    total_timeout_s: 20
+  doc-qa:
+    data_class: public
+    chain: [qwen7b, hosted]
+    first_token_timeout_s: 4
+    total_timeout_s: 30
+  triage:
+    data_class: internal
+    chain: [qwen3b, qwen7b]
+    first_token_timeout_s: 10
+    total_timeout_s: 120
