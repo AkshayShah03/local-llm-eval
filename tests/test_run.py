@@ -1,4 +1,4 @@
-from evalh.run import done_keys, is_unexpected_error, order_items
+from evalh.run import done_keys, is_outage, order_items, undone_keys
 
 
 def test_done_keys_only_counts_responses():
@@ -15,14 +15,13 @@ def test_order_items_is_seeded_and_differs_per_repeat():
     assert sorted(x["id"] for x in a1) == sorted(x["id"] for x in items)
 
 
-def test_is_unexpected_error():
-    assert not is_unexpected_error(None)
-    assert not is_unexpected_error("timeout")
-    assert not is_unexpected_error("first_token_timeout")
-    assert not is_unexpected_error("http 404: nope")
-    assert is_unexpected_error("http 500: boom")
-    assert is_unexpected_error("http 503: down")
-    assert is_unexpected_error("KeyError: 'x'")
+def test_is_outage_only_transport_failures():
+    for e in ("ConnectError: refused", "ReadError: x", "RemoteProtocolError: eof", "WriteError: y",
+              "http 502: bad gateway", "http 503: down", "http 504: t/o"):
+        assert is_outage(e), e
+    for e in (None, "timeout", "first_token_timeout", "http 400: x", "http 404: x", "http 500: boom",
+              "ollama: model runner crashed", "api: bad", "JSONDecodeError: x", "KeyError: 'x'"):
+        assert not is_outage(e), e
 
 
 # ---- run_model with a fake client ----
@@ -31,21 +30,22 @@ import pytest
 from evalh.clients.base import ChatResult
 from evalh.config import ModelConfig
 from evalh.data import read_jsonl
-from evalh.run import RunAborted, run_model
+from evalh.run import RunAborted, WarmupFailed, run_model
 
 MODEL = ModelConfig(name="m", family="f", params_b=1, quant="q")
 DEFAULTS = {"temperature": 0, "seed": 7, "num_ctx": 8192, "num_predict": 512}
 
 
 class FakeClient:
-    def __init__(self, errors=None):
+    def __init__(self, errors=None, warm_error=None):
+        self.warm_error = warm_error
         self.errors = errors or {}  # call index (after warmup) -> error string
         self.calls = 0
         self.unloaded = []
 
     async def chat(self, model, messages, tools=None, options=None, **kw):
         if options.get("num_predict") == 1:
-            return ChatResult(content="ok", load_s=0.5)
+            return ChatResult(error=self.warm_error) if self.warm_error else ChatResult(content="ok", load_s=0.5)
         self.calls += 1
         err = self.errors.get(self.calls, self.errors.get("all"))
         return ChatResult(error=err, total_s=0.1) if err else ChatResult(content="x", total_s=0.1)
@@ -98,7 +98,7 @@ async def test_timeouts_and_http_4xx_are_recorded(tmp_path):
 
 
 async def test_unexpected_errors_not_recorded_and_abort_after_five(tmp_path):
-    client = FakeClient(errors={"all": "http 503: down"})
+    client = FakeClient(errors={"all": "ConnectError: refused"})
     with pytest.raises(RunAborted):
         await _run(tmp_path, client)
     recs = read_jsonl(tmp_path / "raw.jsonl")
@@ -108,7 +108,7 @@ async def test_unexpected_errors_not_recorded_and_abort_after_five(tmp_path):
 
 
 async def test_isolated_unexpected_error_does_not_abort_and_is_not_done(tmp_path):
-    client = FakeClient(errors={2: "KeyError: 'x'"})
+    client = FakeClient(errors={2: "ConnectError: blip"})
     recs = await _run(tmp_path, client)
     assert len([r for r in recs if r["type"] == "response"]) == 7
     assert len(read_jsonl(tmp_path / "err.jsonl")) == 1
@@ -118,3 +118,43 @@ def test_repeat_order_does_not_start_with_previous_last():
     items = [{"id": str(i)} for i in range(2)]
     for r in range(2, 12):
         assert order_items(items, r)[0] != order_items(items, r - 1)[-1]
+
+
+async def test_deterministic_errors_are_recorded_as_responses(tmp_path):
+    client = FakeClient(errors={"all": "ollama: model runner has unexpectedly stopped"})
+    recs = await _run(tmp_path, client)
+    resp = [r for r in recs if r["type"] == "response"]
+    assert len(resp) == 8 and all(r["result"]["error"] for r in resp)
+    assert not (tmp_path / "err.jsonl").exists()
+
+
+async def test_warmup_failure_writes_load_error_and_raises_warmup_failed(tmp_path):
+    client = FakeClient(warm_error="ollama: model requires more system memory")
+    with pytest.raises(WarmupFailed):
+        await _run(tmp_path, client)
+    recs = read_jsonl(tmp_path / "raw.jsonl")
+    assert [r["type"] for r in recs] == ["model_load"] and "memory" in recs[0]["error"]
+    assert client.calls == 0 and client.unloaded == ["m"]
+
+
+async def test_warmup_outage_aborts(tmp_path):
+    with pytest.raises(RunAborted):
+        await _run(tmp_path, FakeClient(warm_error="ConnectError: refused"))
+
+
+def test_undone_keys():
+    items = _items(2)
+    done = {("m", "triage", "t0", 1)}
+    assert undone_keys([MODEL], ["triage"], items, 2, done) == [
+        ("m", "triage", "t1", 1), ("m", "triage", "t0", 2), ("m", "triage", "t1", 2)]
+
+
+async def test_ollama_client_tags():
+    import respx
+    from httpx import Response
+
+    from evalh.clients.ollama import OllamaClient
+    with respx.mock(base_url="http://localhost:11434") as m:
+        m.get("/api/tags").respond(json={"models": [{"name": "a:latest", "digest": "d1"}]})
+        async with OllamaClient() as c:
+            assert await c.tags() == [{"name": "a:latest", "digest": "d1"}]

@@ -36,13 +36,20 @@ from evalh.tools.noc import TOOLS
 ROOT = Path(__file__).resolve().parents[1]
 TOP_K = 4
 EMBED_MODEL = "nomic-embed-text"
-EXPECTED_ERRORS = ("timeout", "first_token_timeout")
+# Connection-level failures from httpx, formatted by the client as "<ExcName>: ...".
+TRANSPORT_ERRORS = ("ConnectError", "ReadError", "WriteError", "CloseError", "RemoteProtocolError",
+                    "LocalProtocolError", "NetworkError", "ProxyError", "UnsupportedProtocol")
+OUTAGE_HTTP = ("http 502", "http 503", "http 504")
 MAX_CONSECUTIVE_ERRORS = 5
 HOSTED_VARS = ("HOSTED_BASE_URL", "HOSTED_API_KEY", "HOSTED_MODEL")
 
 
 class RunAborted(Exception):
     pass
+
+
+class WarmupFailed(Exception):
+    """The model could not be loaded (for example out of memory); the grid moves on to the next model."""
 
 
 def done_keys(records: list[dict]) -> set[tuple]:
@@ -59,12 +66,20 @@ def order_items(items: list[dict], repeat: int) -> list[dict]:
     return out
 
 
-def is_unexpected_error(error: str | None) -> bool:
-    """Timeouts and HTTP 4xx are recorded outcomes. Anything else (5xx, connection loss, a bug
-    caught by the client's catch-all) is treated as an outage."""
-    if not error or error in EXPECTED_ERRORS:
+def is_outage(error: str | None) -> bool:
+    """Only transport failures and gateway-style 502/503/504 mean the server is unavailable. Those are
+    retried on resume. Every other error (in-stream errors, other 5xx, decode errors) can be triggered
+    deterministically by the prompt, so it is recorded as a failed response and scored."""
+    if not error:
         return False
-    return not (error.startswith("http 4"))
+    if error.startswith("http "):
+        return error[:8] in OUTAGE_HTTP
+    return error.split(":", 1)[0] in TRANSPORT_ERRORS
+
+
+def undone_keys(models: list[ModelConfig], tasks, items, repeats, done) -> list[tuple]:
+    return [(m.name, t, i["id"], r) for m in models for r in range(1, repeats + 1)
+            for t in tasks for i in items[t] if (m.name, t, i["id"], r) not in done]
 
 
 def sha256_file(path: Path) -> str | None:
@@ -72,7 +87,8 @@ def sha256_file(path: Path) -> str | None:
 
 
 def input_hashes() -> dict:
-    files = sorted((ROOT / "data/questions").glob("*.jsonl")) + [ROOT / "data/index/chunks.jsonl"]
+    files = sorted((ROOT / "data/questions").glob("*.jsonl")) + [ROOT / "data/index/chunks.jsonl",
+                                                                ROOT / "data/index/embeddings.npy"]
     return {str(f.relative_to(ROOT)): sha256_file(f) for f in files}
 
 
@@ -90,8 +106,7 @@ async def retrieve_all(ollama: OllamaClient, index: Index, questions: list[dict]
 
 
 async def embed_digest(ollama: OllamaClient) -> str | None:
-    tags = (await ollama._http.get("/api/tags")).raise_for_status().json().get("models", [])
-    for m in tags:
+    for m in await ollama.tags():
         if m.get("name") in (EMBED_MODEL, f"{EMBED_MODEL}:latest"):
             return m.get("digest")
     return None
@@ -129,7 +144,14 @@ async def run_model(model: ModelConfig, client, ollama, tasks, items, index, ret
             warm = await client.chat(model.name, [{"role": "user", "content": "ok"}],
                                      options={**options, "num_predict": 1})
             if not warm.ok:
-                print(f"!! warmup failed for {model.name}: {warm.error}", file=sys.stderr, flush=True)
+                if is_outage(warm.error):
+                    raise RunAborted(f"warmup of {model.name} hit an outage ({warm.error}); rerun to resume.")
+                print(f"!! warmup failed for {model.name}: {warm.error}; skipping this model",
+                      file=sys.stderr, flush=True)
+                append_jsonl(out, {"type": "model_load", **base, "provider": model.provider,
+                                   "error": warm.error, "ts": _now()})
+                await ollama.unload(model.name)
+                raise WarmupFailed(f"{model.name}: {warm.error}")
             loaded = next((m for m in await client.ps() if m["name"] == model.name), {})
             append_jsonl(out, {"type": "model_load", **base, "provider": model.provider,
                                "digest": loaded.get("digest"), "size": loaded.get("size"),
@@ -146,9 +168,9 @@ async def run_model(model: ModelConfig, client, ollama, tasks, items, index, ret
                         continue
                     result = await client.chat(model.name, build_messages(task, item, index, retrieved),
                                                tools=TOOLS if task == "tools" else None, options=options)
-                    if is_unexpected_error(result.error):
+                    if is_outage(result.error):
                         consecutive += 1
-                        msg = f"!! UNEXPECTED ERROR {model.name} {item['id']}: {result.error}"
+                        msg = f"!! OUTAGE {model.name} {item['id']}: {result.error}"
                         print(msg, file=sys.stderr, flush=True)
                         append_jsonl(errors_path, {**base, "task": task, "item_id": item["id"],
                                                    "repeat": repeat, "result": result.to_dict(), "ts": _now()})
@@ -159,6 +181,10 @@ async def run_model(model: ModelConfig, client, ollama, tasks, items, index, ret
                                 f"failed items were not recorded as done.")
                         continue
                     consecutive = 0
+                    if result.error and result.error not in ("timeout", "first_token_timeout") \
+                            and not result.error.startswith("http 4"):
+                        print(f"!! recorded failed response {model.name} {item['id']}: {result.error}",
+                              file=sys.stderr, flush=True)
                     append_jsonl(out, {"type": "response", **base, "task": task,
                                        "item_id": item["id"], "repeat": repeat,
                                        "retrieved": retrieved.get(item["id"]) if task == "rag" else None,
@@ -176,6 +202,21 @@ async def run_model(model: ModelConfig, client, ollama, tasks, items, index, ret
     append_jsonl(out, meta)
     if is_local:
         await ollama.unload(model.name)
+
+
+async def _run_one(model, hosted, ollama, tasks, items, index, retrieved, defaults, out, done, run_id, repeats):
+    if pending(model, tasks, items, done, repeats) == 0:
+        print(f"skipping {model.name}: nothing left to run")
+        return
+    for m in await ollama.ps():
+        await ollama.unload(m["name"])
+    if model.provider == "ollama":
+        await run_model(model, ollama, ollama, tasks, items, index, retrieved, defaults, out, done, run_id,
+                        repeats)
+    else:
+        async with hosted_client(hosted) as client:
+            await run_model(model, client, ollama, tasks, items, index, retrieved, defaults, out, done, run_id,
+                            repeats, hosted=hosted)
 
 
 async def main() -> int:
@@ -225,24 +266,29 @@ async def main() -> int:
                                "embed_model": EMBED_MODEL, "embed_model_digest": digest,
                                "input_hashes": hashes})
 
+            requested = []
             for model in grid.models:
                 if args.only and model.name not in args.only:
                     continue
                 if model.provider != "ollama" and hosted is None:
                     print(f"skipping {model.name}: set all of {', '.join(HOSTED_VARS)}")
                     continue
-                if pending(model, tasks, items, done, repeats) == 0:
-                    print(f"skipping {model.name}: nothing left to run")
-                    continue
-                for m in await ollama.ps():
-                    await ollama.unload(m["name"])
-                if model.provider == "ollama":
-                    await run_model(model, ollama, ollama, tasks, items, index, retrieved, grid.defaults, out,
-                                    done, args.run_id, repeats)
-                else:
-                    async with hosted_client(hosted) as client:
-                        await run_model(model, client, ollama, tasks, items, index, retrieved, grid.defaults,
-                                        out, done, args.run_id, repeats, hosted=hosted)
+                requested.append(model)
+                try:
+                    await _run_one(model, hosted, ollama, tasks, items, index, retrieved, grid.defaults, out,
+                                   done, args.run_id, repeats)
+                except WarmupFailed as e:
+                    print(f"skipping model, could not load: {e}", file=sys.stderr, flush=True)
+
+            left = undone_keys(requested, tasks, items, repeats, done_keys(read_jsonl(out)))
+            if left:
+                counts: dict = {}
+                for c, t, _, r in left:
+                    counts[(c, t, r)] = counts.get((c, t, r), 0) + 1
+                print(f"INCOMPLETE: {len(left)} expected responses are missing:", file=sys.stderr)
+                for (c, t, r), n in sorted(counts.items()):
+                    print(f"  {c} {t} repeat {r}: {n}", file=sys.stderr)
+                return 1
     except RunAborted as e:
         print(f"ABORTED: {e}", file=sys.stderr)
         return 1

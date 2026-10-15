@@ -65,6 +65,9 @@ class OllamaClient(AsyncClientMixin):
     async def ps(self) -> list[dict]:
         return (await self._http.get("/api/ps")).raise_for_status().json()["models"]
 
+    async def tags(self) -> list[dict]:
+        return (await self._http.get("/api/tags")).raise_for_status().json().get("models", [])
+
     async def version(self) -> str:
         return (await self._http.get("/api/version")).raise_for_status().json()["version"]
 
