@@ -17,17 +17,17 @@ unified memory; it is reported as such, measured from Ollama's `size_vram`.
 
 Domain is IP backbone operations (AS 2914 context), all from public sources.
 
-- **RAG / doc Q&A** — ~30 hand-written questions over a small corpus: IETF RFC
+- **RAG / doc Q&A**: ~30 hand-written questions over a small corpus: IETF RFC
   excerpts (4271 BGP-4, 1997 and 8092 communities, 6811 RPKI origin validation)
   and NTT's public AS2914 routing-policy / BGP-community pages. Each corpus file
   records its source URL and fetch date. Each question has `required_facts[]`,
   `gold_chunk_ids[]`, and `answerable` (some questions are deliberately not
   answerable from the corpus, to test refusal).
-- **Tool calling** — ~20 questions against a mock NOC toolset
+- **Tool calling**: ~20 questions against a mock NOC toolset
   (`get_bgp_session`, `lookup_prefix_origin`, `get_interface_errors`,
   `open_ticket`) backed by a consistent fixture file. Each question has
   `expected_calls[{name, args}]`, or `[]` when no tool should be called.
-- **Offline triage summaries** — ~10 synthetic incident logs (syslog/BGP flap
+- **Offline triage summaries**: ~10 synthetic incident logs (syslog/BGP flap
   excerpts consistent with the fixtures), each with `required_facts[]` (affected
   peer, prefix, start time, likely cause). Scored by fact recall and the judge,
   relative to the hosted baseline.
