@@ -1,5 +1,6 @@
 import platform
 import subprocess
+import sys
 import threading
 import time
 
@@ -30,19 +31,28 @@ def is_runner(name: str, cmdline: list[str]) -> bool:
     return name.startswith("llama-server") or "runner" in cmdline or "llama-server" in (cmdline[0] if cmdline else "")
 
 
-def _runner_procs():
+def _find_serve():
     for p in _ollama_procs():
         if "serve" in (p.info["cmdline"] or []):
-            try:
-                children = p.children(recursive=True)
-            except psutil.Error:
-                continue
-            for c in children:
-                try:
-                    if is_runner(c.name(), c.cmdline()):
-                        yield c
-                except psutil.Error:
-                    pass
+            return p
+    return None
+
+
+def _runner_procs(serve=None):
+    """Runner children of `ollama serve`. Pass a cached `serve` process to skip the process-table scan."""
+    serve = serve or _find_serve()
+    if serve is None:
+        return
+    try:
+        children = serve.children(recursive=True)
+    except psutil.Error:
+        return
+    for c in children:
+        try:
+            if is_runner(c.name(), c.cmdline()):
+                yield c
+        except psutil.Error:
+            pass
 
 
 def ollama_env() -> dict:
@@ -56,13 +66,14 @@ def ollama_env() -> dict:
     return {}
 
 
-def git_state() -> dict:
-    sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    dirty = bool(subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip())
+def git_state(cwd=None) -> dict:
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=cwd).stdout.strip()
+    dirty = bool(subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True,
+                                cwd=cwd).stdout.strip())
     return {"sha": sha, "dirty": dirty}
 
 
-def _system_used() -> int:
+def system_used() -> int:
     vm = psutil.virtual_memory()
     return vm.total - vm.available
 
@@ -78,21 +89,27 @@ class MemorySampler:
         self.interval = interval
         self.peak_runner_rss = 0
         self.peak_system_used = 0
-        self.baseline_system_used = _system_used()
+        self.baseline_system_used = system_used()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def _loop(self):
+        serve = None
         while not self._stop.is_set():
-            rss = 0
-            for p in _runner_procs():
-                try:
-                    rss += p.memory_info().rss
-                except psutil.Error:
-                    pass
-            self.peak_runner_rss = max(self.peak_runner_rss, rss)
-            self.peak_system_used = max(self.peak_system_used, _system_used())
-            time.sleep(self.interval)
+            try:
+                if serve is None or not serve.is_running():
+                    serve = _find_serve()
+                rss = 0
+                for p in _runner_procs(serve):
+                    try:
+                        rss += p.memory_info().rss
+                    except psutil.Error:
+                        pass
+                self.peak_runner_rss = max(self.peak_runner_rss, rss)
+                self.peak_system_used = max(self.peak_system_used, system_used())
+            except Exception as e:  # keep sampling; a silent dead thread would record zeros as measurements
+                print(f"memory sampler error: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            self._stop.wait(self.interval)
 
     def __enter__(self):
         self._thread.start()
