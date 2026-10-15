@@ -1,0 +1,10 @@
+# All numbers are assumptions; state them next to any cost figure.
+hosted:
+  price_per_1m_input_usd: null     # from the provider's pricing page, with date
+  price_per_1m_output_usd: null
+  pricing_checked: null
+local:
+  hardware_usd: null               # purchase price of the test machine
+  amortisation_months: 36
+  power_watts_under_load: null     # measured with `sudo powermetrics` or a wall meter
+  electricity_usd_per_kwh: 0.15
