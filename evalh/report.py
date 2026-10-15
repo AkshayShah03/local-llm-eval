@@ -71,24 +71,21 @@ def _is_reload(r) -> bool:
 def _zero_scores(task: str, info: dict) -> dict:
     """Quality scores for a failed repeat-1 response: it counts as wrong, never as missing."""
     if task == "rag":
-        return {"failed": True, "answerable": info.get("answerable", True), "fact_recall": 0.0,
+        return {"failed": True, "answerable": info["answerable"], "fact_recall": 0.0,
                 "refused": False, "retrieval_hit": None, "no_judge": True}
     if task == "tools":
-        return {"failed": True, "expects_tool": info.get("expects_tool", True), "selection_ok": False,
+        return {"failed": True, "expects_tool": info["expects_tool"], "selection_ok": False,
                 "args_ok": False, "invalid": False, "no_judge": True}
     return {"failed": True, "fact_recall": 0.0, "no_judge": True}
 
 
-def _item_info(rows: list[dict]) -> dict:
-    """Per item_id facts (answerable / expects_tool) taken from any config that scored it."""
-    info = defaultdict(dict)
-    for r in rows:
-        sc = r["scores"]
-        if sc.get("failed"):
-            continue
-        for k in ("answerable", "expects_tool"):
-            if k in sc:
-                info[r["item_id"]][k] = sc[k]
+def load_item_info(questions_dir: Path) -> dict:
+    """item_id -> exact metadata (answerable / expects_tool) from the question files."""
+    info = {}
+    for q in read_jsonl(Path(questions_dir) / "rag.jsonl"):
+        info[q["id"]] = {"answerable": bool(q["answerable"])}
+    for q in read_jsonl(Path(questions_dir) / "tools.jsonl"):
+        info[q["id"]] = {"expects_tool": bool(q["expected_calls"])}
     return info
 
 
@@ -166,12 +163,12 @@ def _triage_correctness(rows: list[dict]) -> dict:
             and r["scores"].get("correctness") is not None}
 
 
-def aggregate(scored: list[dict]) -> dict:
+def aggregate(scored: list[dict], questions_dir: Path | None = None) -> dict:
     groups = defaultdict(list)
     for r in scored:
         if r.get("type") == "response" and r.get("scores") is not None:
             groups[(r["config"], r["task"])].append(r)
-    info = _item_info([r for rows in groups.values() for r in rows])
+    info = load_item_info(questions_dir or ROOT / "data/questions")
     out = defaultdict(dict)
     for (config, task), rows in groups.items():
         out[config][task] = _task_metrics(task, rows, info)
@@ -349,7 +346,8 @@ def _cell(task, col, t, header_n):
 
 
 def render(run_id: str, results_dir: Path | None = None, out_dir: Path | None = None,
-           acceptance_path: Path | None = None, charts: bool = True) -> Path:
+           acceptance_path: Path | None = None, charts: bool = True,
+           questions_dir: Path | None = None) -> Path:
     results_dir = Path(results_dir or ROOT / "results")
     out = Path(out_dir or ROOT / "reports")
     scored = read_jsonl(results_dir / f"scored-{run_id}.jsonl")
@@ -358,7 +356,7 @@ def render(run_id: str, results_dir: Path | None = None, out_dir: Path | None = 
     loads, status = effective_loads(scored)
     label = lambda c: f"{c} (reload failed)" if status.get(c) == "reload failed" else c  # noqa: E731
     meta = latest_by_config(scored, "model_meta", prefer_complete=True)
-    metrics = aggregate(scored)
+    metrics = aggregate(scored, questions_dir)
     acceptance = load_acceptance(Path(acceptance_path or ROOT / "configs/acceptance.yaml"))
     ev = evaluate(acceptance, metrics)
     memory = {c: (None if status[c] == "failed" else ld.get("size_vram")) for c, ld in loads.items()}
