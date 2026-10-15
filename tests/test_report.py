@@ -2,8 +2,8 @@ import math
 
 import yaml
 
-from evalh.report import (aggregate, evaluate, fmt, latest_by_config, memory_series, recommend, render,
-                          throughput_series)
+from evalh.report import (_charts, aggregate, effective_loads, evaluate, fmt, memory_series, recommend, render,
+                          smaller_unevaluated, throughput_series)
 
 
 def resp(config, task, item, repeat, total, scores, decode=20.0, prefill=None, prompt=None, cached=0):
@@ -104,12 +104,84 @@ def test_prefill_median_ignores_small_fresh_counts():
     assert throughput_series(rows)["m"]["prefill_tps_median"] == 300.0
 
 
-def test_latest_by_config_and_memory_series():
+def test_effective_loads_and_memory_series():
     recs = [{"type": "model_load", "config": "a", "size_vram": 1}, {"type": "model_load", "config": "a", "size_vram": 2},
-            {"type": "model_load", "config": "b", "error": "boom"}]
-    loads = latest_by_config(recs, "model_load")
-    assert loads["a"]["size_vram"] == 2
-    assert memory_series(["a", "b", "hosted"], loads) == [("a", 2 / 1e9 * 1.0)]
+            {"type": "model_load", "config": "b", "error": "boom"},
+            {"type": "model_load", "config": "c", "size_vram": 5}, {"type": "model_load", "config": "c", "error": "x"}]
+    loads, status = effective_loads(recs)
+    assert loads["a"]["size_vram"] == 2 and loads["c"]["size_vram"] == 5
+    assert status == {"a": "ok", "b": "failed", "c": "reload failed"}
+    assert memory_series(["a", "b", "c", "hosted"], loads) == [("a", 2 / 1e9), ("c", 5 / 1e9)]
+
+
+def test_reload_rows_excluded_from_latency():
+    rows = tool_rows("m", 10, 1.0)
+    rows.append(resp("m", "tools", "t0", 3, 50.0, {"failed": False, "selection_ok": True, "args_ok": True,
+                                                    "invalid": False, "expects_tool": True}))
+    rows[-1]["result"]["load_s"] = 30.0
+    m = aggregate(rows)["m"]["tools"]
+    assert m["latency_p95_s"] == 1.0 and m["reloads_excluded"] == 1 and m["n_metrics"]["latency_p95_s"] == 20
+
+
+def timeout_row(config, item, total=120.0):
+    r = resp(config, "tools", item, 1, total, {"failed": True})
+    r["result"]["error"] = "timeout"
+    return r
+
+
+def test_timeouts_count_as_wrong_and_slow():
+    rows = []
+    for i in range(5):
+        rows.append(resp("m", "tools", f"t{i}", 1, 1.0, {"failed": False, "selection_ok": True, "args_ok": True,
+                                                         "invalid": False, "expects_tool": True}))
+        rows.append(timeout_row("m", f"u{i}"))
+    # other configs scored u* as tool items
+    for i in range(5):
+        rows.append(resp("o", "tools", f"u{i}", 1, 1.0, {"failed": False, "selection_ok": True, "args_ok": True,
+                                                         "invalid": False, "expects_tool": True}))
+    metrics = aggregate(rows)
+    m = metrics["m"]["tools"]
+    assert m["tool_selection"] == 0.5 and m["args_exact"] == 0.5 and m["invalid_rate"] == 0.0
+    assert m["n_metrics"]["invalid_rate"] == 10 and m["latency_p95_s"] == 120.0
+    acc = {"noc_tools": {"task": "tools", "criteria": {"tool_selection": {"min": 0.9}, "latency_p95_s": {"max": 4.0}}}}
+    assert evaluate(acc, metrics)["noc_tools"]["m"] == {"pass": False, "failed": ["tool_selection", "latency_p95_s"]}
+
+
+def test_non_timeout_failure_excluded_from_latency_but_wrong():
+    row = resp("m", "tools", "x", 1, 99.0, {"failed": True})
+    row["result"]["error"] = "http 400"
+    m = aggregate(tool_rows("m", 10, 1.0) + [row])["m"]["tools"]
+    assert m["latency_p95_s"] == 1.0 and abs(m["tool_selection"] - 10 / 11) < 1e-9
+
+
+def test_failed_rag_unanswerable_refusal_false_and_judge_missing():
+    ok_unans = rag_row("o", "u", False, None, True)
+    failed = resp("m", "rag", "u", 1, 1.0, {"failed": True})
+    failed["result"]["error"] = "timeout"
+    m = aggregate([ok_unans, failed, rag_row("m", "a", True, 1.0, False, {"correctness": 5, "faithfulness": 5})])["m"]["rag"]
+    assert m["refusal_unanswerable"] == 0.0 and m["judge_missing_failed_response"] == 0 and m["judged"] == 1
+    tri = resp("m", "triage", "t", 1, 1.0, {"failed": True})
+    mt = aggregate([tri])["m"]["triage"]
+    assert mt["fact_recall"] == 0.0 and mt["correctness"] is None and mt["judge_missing_failed_response"] == 1
+
+
+def test_quality_vs_baseline_is_paired():
+    rows = [triage_row("m", "a", 4), triage_row("m", "b", 5), triage_row("hosted", "a", 5)]
+    m = aggregate(rows)["m"]["triage"]
+    assert abs(m["quality_vs_baseline"] - (-0.2)) < 1e-9 and m["n_metrics"]["quality_vs_baseline"] == 1
+
+
+def test_smaller_unevaluated_noted():
+    ev = {"u": {"a": {"pass": None, "failed": []}, "b": {"pass": True, "failed": []},
+                "c": {"pass": None, "failed": []}}}
+    assert smaller_unevaluated(ev, {"a": 1, "b": 2, "c": 3}, "u", "b") == ["a"]
+    assert smaller_unevaluated(ev, {}, "u", "none") == []
+
+
+def test_charts_write_pngs(tmp_path):
+    rows = tool_rows("a-instruct", 9, 1.0)
+    _charts(["a-instruct"], aggregate(rows), {"a-instruct": {"size_vram": 2e9}}, throughput_series(rows), tmp_path)
+    assert sorted(p.name for p in tmp_path.glob("*.png")) == ["memory.png", "quality_vs_latency.png", "throughput.png"]
 
 
 def test_nan_is_undefined():
@@ -133,6 +205,7 @@ def test_render_end_to_end(tmp_path):
         *[{**rag_row("small", "a", True, 1.0, False, {"correctness": 5, "faithfulness": 5}), "judge": "judge-x"},
           {**rag_row("small", "b", True, 1.0, False, failed_judge=True), "judge": "judge-x"}],
         triage_row("small", "a", 4),
+        {**triage_row("small", "n", 4), "scores": {"failed": False, "fact_recall": float("nan"), "correctness": 4}},
     ]
     results = tmp_path / "results"
     results.mkdir()
@@ -148,4 +221,6 @@ def test_render_end_to_end(tmp_path):
     assert "Invocations: 2" in text and "bbbbbbbb (dirty)" in text and "judge-x" in text
     assert "recommended `small`" in text and "not evaluated" in text
     assert "judged 1, judge_failed 1" in text
-    assert "(n=" in text and "nan" not in text.replace("Acceptance", "").split()
+    assert "(n=" in text and "undefined" in text
+    cells = [c.strip() for line in text.splitlines() if line.startswith("|") for c in line.split("|")]
+    assert not any("nan" in c.lower().split() or c.lower().startswith("nan") for c in cells)

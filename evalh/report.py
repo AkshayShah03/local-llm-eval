@@ -19,13 +19,13 @@ MIN_FRESH_PREFILL_TOKENS = 64
 HOSTED = "hosted"
 PCT = {"fact_recall", "refusal_unanswerable", "false_refusal", "retrieval_hit", "tool_selection", "args_exact",
        "abstain_ok", "invalid_rate", "failure_rate", "quality_vs_baseline"}
-N_COLUMNS = PCT | {"faithfulness", "correctness"}
+N_COLUMNS = (PCT - {"failure_rate"}) | {"faithfulness", "correctness", "latency_p50_s", "latency_p95_s", "ttft_p50_s"}
 TABLES = {
     "rag": ["fact_recall", "faithfulness", "correctness", "refusal_unanswerable", "false_refusal", "retrieval_hit",
-            "latency_p50_s", "latency_p95_s", "failure_rate"],
+            "ttft_p50_s", "latency_p50_s", "latency_p95_s", "failure_rate"],
     "tools": ["tool_selection", "args_exact", "abstain_ok", "invalid_rate", "latency_p50_s", "latency_p95_s",
               "failure_rate"],
-    "triage": ["fact_recall", "correctness", "quality_vs_baseline", "latency_p50_s", "failure_rate"],
+    "triage": ["fact_recall", "correctness", "quality_vs_baseline", "ttft_p50_s", "latency_p50_s", "failure_rate"],
 }
 
 
@@ -60,10 +60,45 @@ def _prefill(rows):
     return out
 
 
-def _task_metrics(task: str, rows: list[dict]) -> dict:
+RELOAD_LOAD_S = 0.5
+TIMEOUT_ERRORS = ("timeout", "first_token_timeout")
+
+
+def _is_reload(r) -> bool:
+    return (r["result"].get("load_s") or 0) > RELOAD_LOAD_S
+
+
+def _zero_scores(task: str, info: dict) -> dict:
+    """Quality scores for a failed repeat-1 response: it counts as wrong, never as missing."""
+    if task == "rag":
+        return {"failed": True, "answerable": info.get("answerable", True), "fact_recall": 0.0,
+                "refused": False, "retrieval_hit": None, "no_judge": True}
+    if task == "tools":
+        return {"failed": True, "expects_tool": info.get("expects_tool", True), "selection_ok": False,
+                "args_ok": False, "invalid": False, "no_judge": True}
+    return {"failed": True, "fact_recall": 0.0, "no_judge": True}
+
+
+def _item_info(rows: list[dict]) -> dict:
+    """Per item_id facts (answerable / expects_tool) taken from any config that scored it."""
+    info = defaultdict(dict)
+    for r in rows:
+        sc = r["scores"]
+        if sc.get("failed"):
+            continue
+        for k in ("answerable", "expects_tool"):
+            if k in sc:
+                info[r["item_id"]][k] = sc[k]
+    return info
+
+
+def _task_metrics(task: str, rows: list[dict], info: dict | None = None) -> dict:
+    info = info or {}
     ok = [r for r in rows if not r["scores"].get("failed")]
-    first = [r for r in ok if r["repeat"] == 1]
-    s = [r["scores"] for r in first]
+    timed_out = [r for r in rows if r["scores"].get("failed") and r["result"].get("error") in TIMEOUT_ERRORS]
+    # Repeat-1 quality set: failed items count as wrong in every denominator they belong to.
+    s = [r["scores"] if not r["scores"].get("failed") else _zero_scores(task, info.get(r["item_id"], {}))
+         for r in rows if r["repeat"] == 1]
     n_of = {}
 
     def mean_of(name, values):
@@ -71,24 +106,32 @@ def _task_metrics(task: str, rows: list[dict]) -> dict:
         n_of[name] = len(vals)
         return mean(vals) if vals else None
 
+    lat_rows = [r for r in ok + timed_out if not _is_reload(r)]
+    reloads = sum(_is_reload(r) for r in ok + timed_out)
+    lat = [r["result"].get("total_s") for r in lat_rows]
+    ttft = [r["result"].get("ttft_s") for r in lat_rows]
+    n_of["latency_p50_s"] = n_of["latency_p95_s"] = len([v for v in lat if v is not None])
+    n_of["ttft_p50_s"] = len([v for v in ttft if v is not None])
     decode, prefill = _decode(ok), _prefill(ok)
     n_of["decode_tps_median"], n_of["prefill_tps_median"] = len(decode), len(prefill)
     m = {
         "n": len(rows),
         "failure_rate": 1 - len(ok) / len(rows),
-        "latency_p50_s": percentile([r["result"]["total_s"] for r in ok], 50),
-        "latency_p95_s": percentile([r["result"]["total_s"] for r in ok], 95),
-        "ttft_p50_s": percentile([r["result"].get("ttft_s") for r in ok], 50),
+        "reloads_excluded": reloads,
+        "latency_p50_s": percentile(lat, 50),
+        "latency_p95_s": percentile(lat, 95),
+        "ttft_p50_s": percentile(ttft, 50),
         "decode_tps_median": _median(decode),
         "prefill_tps_median": _median(prefill),
     }
     if task == "rag":
         ans = [x for x in s if x["answerable"]]
         unans = [x for x in s if not x["answerable"]]
+        judged_ok = [x for x in ans if not x.get("judge_failed") and not x.get("no_judge")]
         m.update({
             "fact_recall": mean_of("fact_recall", (x.get("fact_recall") for x in ans)),
-            "faithfulness": mean_of("faithfulness", (x.get("faithfulness") for x in ans if not x.get("judge_failed"))),
-            "correctness": mean_of("correctness", (x.get("correctness") for x in ans if not x.get("judge_failed"))),
+            "faithfulness": mean_of("faithfulness", (x.get("faithfulness") for x in judged_ok)),
+            "correctness": mean_of("correctness", (x.get("correctness") for x in judged_ok)),
             "refusal_unanswerable": mean_of("refusal_unanswerable", (x.get("refused") for x in unans)),
             "false_refusal": mean_of("false_refusal", (x.get("refused") for x in ans)),
             "retrieval_hit": mean_of("retrieval_hit", (x.get("retrieval_hit") for x in ans)),
@@ -105,15 +148,22 @@ def _task_metrics(task: str, rows: list[dict]) -> dict:
         judged_pool = []
     else:
         m.update({"fact_recall": mean_of("fact_recall", (x.get("fact_recall") for x in s)),
-                  "correctness": mean_of("correctness", (x.get("correctness") for x in s if not x.get("judge_failed")))})
+                  "correctness": mean_of("correctness", (x.get("correctness") for x in s
+                                                         if not x.get("judge_failed") and not x.get("no_judge")))})
         judged_pool = s
     if task != "tools":
-        failed = sum(bool(x.get("judge_failed")) for x in judged_pool)
-        m["judge_failed"] = failed
+        m["judge_failed"] = sum(bool(x.get("judge_failed")) for x in judged_pool)
+        m["judge_missing_failed_response"] = sum(bool(x.get("no_judge")) for x in judged_pool)
         m["judged"] = sum(("correctness" in x or "faithfulness" in x) and not x.get("judge_failed")
-                          for x in judged_pool)
+                          and not x.get("no_judge") for x in judged_pool)
     m["n_metrics"] = n_of
     return m
+
+
+def _triage_correctness(rows: list[dict]) -> dict:
+    return {r["item_id"]: float(r["scores"]["correctness"]) for r in rows
+            if r["repeat"] == 1 and not r["scores"].get("failed") and not r["scores"].get("judge_failed")
+            and r["scores"].get("correctness") is not None}
 
 
 def aggregate(scored: list[dict]) -> dict:
@@ -121,15 +171,19 @@ def aggregate(scored: list[dict]) -> dict:
     for r in scored:
         if r.get("type") == "response" and r.get("scores") is not None:
             groups[(r["config"], r["task"])].append(r)
+    info = _item_info([r for rows in groups.values() for r in rows])
     out = defaultdict(dict)
     for (config, task), rows in groups.items():
-        out[config][task] = _task_metrics(task, rows)
-    base = out.get(HOSTED, {}).get("triage", {}).get("correctness")
+        out[config][task] = _task_metrics(task, rows, info)
+    base = _triage_correctness(groups.get((HOSTED, "triage"), []))
     for config, tasks in out.items():
         if "triage" in tasks:
-            c = tasks["triage"].get("correctness")
-            tasks["triage"]["quality_vs_baseline"] = (c - base) / base if base and c is not None else None
-            tasks["triage"]["n_metrics"]["quality_vs_baseline"] = tasks["triage"]["n_metrics"].get("correctness", 0)
+            mine = _triage_correctness(groups[(config, "triage")])
+            paired = [i for i in mine if i in base]
+            m = tasks["triage"]
+            m["n_metrics"]["quality_vs_baseline"] = len(paired)
+            b = mean(base[i] for i in paired) if paired else None
+            m["quality_vs_baseline"] = (mean(mine[i] for i in paired) - b) / b if b else None
     return dict(out)
 
 
@@ -187,6 +241,33 @@ def latest_by_config(records: list[dict], rtype: str, prefer_complete: bool = Fa
     return out
 
 
+def effective_loads(records: list[dict]) -> tuple[dict, dict]:
+    """Per config: the latest model_load without an error if any exists, else the latest one.
+    Status is ok, failed (never loaded) or reload failed (latest errored, an earlier one succeeded)."""
+    allr = defaultdict(list)
+    for r in records:
+        if r.get("type") == "model_load":
+            allr[r["config"]].append(r)
+    loads, status = {}, {}
+    for c, rs in allr.items():
+        good = [r for r in rs if not r.get("error")]
+        loads[c] = good[-1] if good else rs[-1]
+        status[c] = "failed" if not good else ("reload failed" if rs[-1].get("error") else "ok")
+    return loads, status
+
+
+def smaller_unevaluated(evaluation: dict, memory: dict, use_case: str, rec: str) -> list[str]:
+    if rec == "none":
+        return []
+    out = []
+    for c, v in evaluation[use_case].items():
+        if v["pass"] is not None or c == HOSTED or c == rec:
+            continue
+        if rec == HOSTED or (memory.get(c) and memory.get(rec) and memory[c] < memory[rec]):
+            out.append(c)
+    return out
+
+
 def memory_series(order: list[str], loads: dict) -> list[tuple[str, float]]:
     """(config, GB resident in GPU memory) for local configs that loaded."""
     return [(c, loads[c]["size_vram"] / 1e9) for c in order
@@ -211,7 +292,7 @@ def _short(name: str) -> str:
     return name.replace("-instruct", "")
 
 
-def _provenance(run_meta, invocations, responses, loads, metrics) -> list[str]:
+def _provenance(run_meta, invocations, responses, status, metrics) -> list[str]:
     lines = ["## Run provenance", ""]
     machine = run_meta.get("machine") or {}
     lines.append(f"- Machine: {machine.get('chip', 'unknown')}, {machine.get('memory_gb', '?')} GB, "
@@ -230,12 +311,20 @@ def _provenance(run_meta, invocations, responses, loads, metrics) -> list[str]:
     hosted = sorted({m["hosted_model"] for m in responses if m.get("hosted_model")})
     if hosted:
         lines.append(f"- Hosted baseline model: {', '.join(hosted)}")
-    failed_load = [c for c, ld in loads.items() if ld.get("error")]
+    failed_load = [c for c, st in status.items() if st == "failed"]
     lines.append(f"- Failed to load: {', '.join(failed_load) or 'none'}")
+    reload_failed = [c for c, st in status.items() if st == "reload failed"]
+    if reload_failed:
+        lines.append(f"- Latest reload failed (earlier load used for memory): {', '.join(reload_failed)}")
+    rel = [f"{c}/{t}: {m['reloads_excluded']}" for c, ts in metrics.items() for t, m in ts.items()
+           if m["reloads_excluded"]]
+    lines.append(f"- Responses excluded from latency for a model reload (load_s > {RELOAD_LOAD_S} s): "
+                 f"{', '.join(rel) or 'none'}")
     bad = [f"{c}/{t} ({m['failure_rate']:.0%} of {m['n']})" for c, ts in metrics.items()
            for t, m in ts.items() if m["failure_rate"] > 0]
     lines.append(f"- Configs with failed responses: {', '.join(bad) or 'none'}")
-    judge_rows = [f"{c}/{t}: judged {m['judged']}, judge_failed {m['judge_failed']}"
+    judge_rows = [f"{c}/{t}: judged {m['judged']}, judge_failed {m['judge_failed']}, "
+                  f"no judgement (failed response) {m['judge_missing_failed_response']}"
                   for c, ts in metrics.items() for t, m in ts.items() if "judged" in m]
     if judge_rows:
         lines += ["- Judge coverage (repeat 1):"] + [f"  - {j}" for j in judge_rows]
@@ -266,19 +355,20 @@ def render(run_id: str, results_dir: Path | None = None, out_dir: Path | None = 
     scored = read_jsonl(results_dir / f"scored-{run_id}.jsonl")
     run_meta = next((r for r in scored if r.get("type") == "run_meta"), {})
     invocations = [r for r in scored if r.get("type") == "invocation"]
-    loads = latest_by_config(scored, "model_load")
+    loads, status = effective_loads(scored)
+    label = lambda c: f"{c} (reload failed)" if status.get(c) == "reload failed" else c  # noqa: E731
     meta = latest_by_config(scored, "model_meta", prefer_complete=True)
     metrics = aggregate(scored)
     acceptance = load_acceptance(Path(acceptance_path or ROOT / "configs/acceptance.yaml"))
     ev = evaluate(acceptance, metrics)
-    memory = {c: (None if ld.get("error") else ld.get("size_vram")) for c, ld in loads.items()}
+    memory = {c: (None if status[c] == "failed" else ld.get("size_vram")) for c, ld in loads.items()}
     rec = recommend(ev, memory)
     order = list(dict.fromkeys(r["config"] for r in scored if r.get("config") and r["type"] != "invocation"))
     tput = throughput_series(scored)
 
     lines = [f"# Results: run {run_id}", ""]
     lines += _provenance(run_meta, invocations,
-                         [r for r in scored if r.get("type") == "response"] + list(meta.values()), loads, metrics)
+                         [r for r in scored if r.get("type") == "response"] + list(meta.values()), status, metrics)
 
     lines += ["", "## Memory and throughput", "",
               "| config | weights+KV in GPU (GB) | peak runner RSS (GB) | system delta (GB) | load s | "
@@ -286,12 +376,12 @@ def render(run_id: str, results_dir: Path | None = None, out_dir: Path | None = 
               "|---|---|---|---|---|---|---|"]
     for c in order:
         ld, mt, tp = loads.get(c, {}), meta.get(c, {}), tput.get(c, {})
-        if ld.get("error"):
+        if status.get(c) == "failed":
             lines.append(f"| {c} | failed to load | – | – | – | – | – |")
             continue
         dec = f"{fmt(tp.get('decode_tps_median'))} ({tp.get('n_decode', 0)})" if tp else "–"
         pre = f"{fmt(tp.get('prefill_tps_median'))} ({tp.get('n_prefill', 0)})" if tp else "–"
-        lines.append(f"| {c} | {_gb(ld.get('size_vram'))} | {_gb(mt.get('peak_runner_rss'))} | "
+        lines.append(f"| {label(c)} | {_gb(ld.get('size_vram'))} | {_gb(mt.get('peak_runner_rss'))} | "
                      f"{_gb(mt.get('system_used_delta'))} | {fmt(ld.get('warmup_load_s'))} | {dec} | {pre} |")
 
     for task, cols in TABLES.items():
@@ -300,27 +390,35 @@ def render(run_id: str, results_dir: Path | None = None, out_dir: Path | None = 
                            or [0]) or None for k in cols if k in N_COLUMNS}
         lines += ["", f"## {task}", "", "| config | " + " | ".join(heads) + " |", "|---" * (len(cols) + 1) + "|"]
         for c in order:
-            if loads.get(c, {}).get("error"):
+            if status.get(c) == "failed":
                 lines.append(f"| {c} | failed to load |" + " – |" * (len(cols) - 1))
                 continue
             t = metrics.get(c, {}).get(task, {})
-            lines.append(f"| {c} | " + " | ".join(_cell(task, k, t, header_n.get(k)) for k in cols) + " |")
+            lines.append(f"| {label(c)} | " + " | ".join(_cell(task, k, t, header_n.get(k)) for k in cols) + " |")
 
     lines += ["", "## Acceptance", ""]
     for use_case, configs in ev.items():
-        r = rec[use_case]
+        r, note = rec[use_case], ""
         if r == "none" and any(v["pass"] is None for v in configs.values()):
             r = "none (some configs not evaluated)"
-        lines += [f"### {use_case}: recommended `{r}`", "", "| config | pass | failed criteria |", "|---|---|---|"]
+        elif r != "none":
+            skipped = smaller_unevaluated(ev, memory, use_case, r)
+            if skipped:
+                note = f" (smaller configs not evaluated: {', '.join(skipped)})"
+        lines += [f"### {use_case}: recommended `{r}`{note}", "", "| config | pass | failed criteria |", "|---|---|---|"]
         for c in order:
             if c in configs:
                 v = configs[c]
-                lines.append(f"| {c} | {fmt(v['pass']) if v['pass'] is not None else 'not evaluated'} | "
+                lines.append(f"| {label(c)} | {fmt(v['pass']) if v['pass'] is not None else 'not evaluated'} | "
                              f"{', '.join(v['failed']) or '–'} |")
-            elif loads.get(c, {}).get("error"):
+            elif status.get(c) == "failed":
                 lines.append(f"| {c} | failed to load | – |")
         lines.append("")
 
+    lines += ["", "Latency notes: p50/p95 and TTFT exclude responses that triggered a model reload "
+              f"(load_s > {RELOAD_LOAD_S} s) and include timeouts at their recorded total_s, which is a "
+              "conservative lower bound on the true latency. Other failed responses are excluded from latency. "
+              "Failed repeat-1 items count as wrong in quality rates."]
     out.mkdir(parents=True, exist_ok=True)
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     if charts:
